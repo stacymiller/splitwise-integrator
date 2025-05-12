@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Splitwise Receipt Uploader</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .upload-container {
+            border: 2px dashed #ccc;
+            padding: 20px;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .processing {
+            background-color: #e2f3f5;
+            color: #0c5460;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border-left-color: #09f;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .auth-container {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .auth-button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .auth-button:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <h1>Splitwise Receipt Uploader</h1>
+
+    {% if authenticated %}
+    <div style="text-align: right; margin-bottom: 10px;">
+        <a href="/logout"><button class="auth-button" style="background-color: #f44336;">Logout</button></a>
+    </div>
+    <div class="upload-container">
+        <form id="uploadForm">
+            <input type="file" id="fileInput" accept="image/*" required>
+            <button type="submit">Upload Receipt</button>
+        </form>
+    </div>
+    <div id="status" class="status" style="display: none;"></div>
+    {% else %}
+    <div class="auth-container">
+        <p>Please authenticate with Splitwise to use this application.</p>
+        <a href="/authorize"><button class="auth-button">Login with Splitwise</button></a>
+    </div>
+    {% endif %}
+
+    <script>
+        const uploadForm = document.getElementById('uploadForm');
+        if (uploadForm) {
+            uploadForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const fileInput = document.getElementById('fileInput');
+                const statusDiv = document.getElementById('status');
+
+                if (!fileInput.files.length) {
+                    statusDiv.textContent = 'Please select a file';
+                    statusDiv.className = 'status error';
+                    statusDiv.style.display = 'block';
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('file', fileInput.files[0]);
+
+                try {
+                    // Step 1: Upload the file
+                    statusDiv.innerHTML = '<div class="spinner"></div>Uploading file...';
+                    statusDiv.className = 'status processing';
+                    statusDiv.style.display = 'block';
+
+                    const uploadResponse = await fetch('/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (!uploadResponse.ok) {
+                        const errorData = await uploadResponse.json();
+                        throw new Error(errorData.error || 'Error uploading file');
+                    }
+
+                    const uploadData = await uploadResponse.json();
+
+                    // Get the filepath from the response
+                    const filepath = uploadData.filepath;
+
+                    // Step 2: Process the receipt
+                    statusDiv.innerHTML = `<div class="spinner"></div>${uploadData.message}`;
+
+                    const processResponse = await fetch('/process_receipt', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ filepath: filepath })
+                    });
+
+                    if (!processResponse.ok) {
+                        const errorData = await processResponse.json();
+                        throw new Error(errorData.error || 'Error processing receipt');
+                    }
+
+                    const processData = await processResponse.json();
+
+                    // Step 3: Create the expense
+                    statusDiv.innerHTML = `<div class="spinner"></div>${processData.message}`;
+
+                    const createResponse = await fetch('/create_expense', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ 
+                            receipt_info: processData.receipt_info,
+                            filepath: filepath
+                        })
+                    });
+
+                    if (!createResponse.ok) {
+                        const errorData = await createResponse.json();
+                        throw new Error(errorData.error || 'Error creating expense');
+                    }
+
+                    const createData = await createResponse.json();
+
+                    // Show success message
+                    statusDiv.innerHTML = `Success! Expense created with ID: ${createData.expense_id}<br><br>${createData.human_readable_confirmation.replace(/\n/g, '<br>')}`;
+                    statusDiv.className = 'status success';
+
+                    // Reset the file input
+                    fileInput.value = '';
+
+                } catch (error) {
+                    statusDiv.textContent = `Error: ${error.message}`;
+                    statusDiv.className = 'status error';
+                }
+
+                statusDiv.style.display = 'block';
+            });
+        }
+    </script>
+</body>
+</html> 
