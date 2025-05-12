@@ -35,6 +35,9 @@
             align-items: center;
             justify-content: center;
         }
+        .processing span {
+            vertical-align: middle;
+        }
         .spinner {
             border: 4px solid rgba(0, 0, 0, 0.1);
             width: 20px;
@@ -43,6 +46,8 @@
             border-left-color: #09f;
             animation: spin 1s linear infinite;
             margin-right: 10px;
+            display: inline-block;
+            vertical-align: middle;
         }
         @keyframes spin {
             0% { transform: rotate(0deg); }
@@ -64,6 +69,28 @@
         .auth-button:hover {
             background-color: #45a049;
         }
+        .upload-container {
+            border: 2px dashed #ccc;
+            padding: 20px;
+            text-align: center;
+            margin: 20px 0;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        .upload-container:hover {
+            border-color: #4CAF50;
+            background-color: #f9f9f9;
+        }
+        .upload-container.dragover {
+            border-color: #4CAF50;
+            background-color: #f0f8f0;
+        }
+        #previewContainer {
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+        }
     </style>
 </head>
 <body>
@@ -73,10 +100,15 @@
     <div style="text-align: right; margin-bottom: 10px;">
         <a href="/logout"><button class="auth-button" style="background-color: #f44336;">Logout</button></a>
     </div>
-    <div class="upload-container">
+    <div class="upload-container" id="pasteArea">
         <form id="uploadForm">
-            <input type="file" id="fileInput" accept="image/*,.pdf" required>
+            <input type="file" id="fileInput" accept="image/*,.pdf">
             <button type="submit">Upload Receipt</button>
+            <p>or paste an image from clipboard (Ctrl+V / Cmd+V)</p>
+            <div id="previewContainer" style="display: none; margin-top: 10px;">
+                <img id="imagePreview" style="max-width: 100%; max-height: 300px;">
+                <p>Image ready to upload</p>
+            </div>
         </form>
     </div>
     <div id="status" class="status" style="display: none;"></div>
@@ -88,6 +120,97 @@
     {% endif %}
 
     <script>
+        // Variable to store the pasted image file
+        let pastedImageFile = null;
+
+        // Function to handle paste events
+        function handlePaste(e) {
+            const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].type.indexOf('image') !== -1) {
+                    // Get the image file from clipboard
+                    const blob = items[i].getAsFile();
+
+                    // Create a file with proper name and type
+                    const currentDate = new Date();
+                    const fileName = `pasted-image-${currentDate.getTime()}.png`;
+                    pastedImageFile = new File([blob], fileName, { type: 'image/png' });
+
+                    // Show preview
+                    const reader = new FileReader();
+                    reader.onload = function(event) {
+                        document.getElementById('imagePreview').src = event.target.result;
+                        document.getElementById('previewContainer').style.display = 'block';
+                    };
+                    reader.readAsDataURL(pastedImageFile);
+
+                    // Clear the file input to avoid confusion
+                    document.getElementById('fileInput').value = '';
+
+                    break;
+                }
+            }
+        }
+
+        // Add paste event listener to the document
+        document.addEventListener('paste', handlePaste);
+
+        // Also add it specifically to the paste area for better UX
+        const pasteArea = document.getElementById('pasteArea');
+        if (pasteArea) {
+            pasteArea.addEventListener('paste', handlePaste);
+
+            // Add click event to clear pasted image when clicking on the paste area
+            pasteArea.addEventListener('click', function(event) {
+                if (!event.target.closest('#previewContainer') && !event.target.closest('button')) {
+                    document.getElementById('previewContainer').style.display = 'none';
+                    pastedImageFile = null;
+                }
+            });
+
+            // Add drag and drop support
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                pasteArea.addEventListener(eventName, preventDefaults, false);
+            });
+
+            function preventDefaults(e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+
+            ['dragenter', 'dragover'].forEach(eventName => {
+                pasteArea.addEventListener(eventName, highlight, false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                pasteArea.addEventListener(eventName, unhighlight, false);
+            });
+
+            function highlight() {
+                pasteArea.classList.add('dragover');
+            }
+
+            function unhighlight() {
+                pasteArea.classList.remove('dragover');
+            }
+
+            // Handle dropped files
+            pasteArea.addEventListener('drop', handleDrop, false);
+
+            function handleDrop(e) {
+                const dt = e.dataTransfer;
+                const files = dt.files;
+
+                if (files.length) {
+                    document.getElementById('fileInput').files = files;
+                    // Clear any pasted image
+                    pastedImageFile = null;
+                    document.getElementById('previewContainer').style.display = 'none';
+                }
+            }
+        }
+
         const uploadForm = document.getElementById('uploadForm');
         if (uploadForm) {
             uploadForm.addEventListener('submit', async (e) => {
@@ -95,21 +218,28 @@
                 const fileInput = document.getElementById('fileInput');
                 const statusDiv = document.getElementById('status');
 
-                if (!fileInput.files.length) {
-                    statusDiv.textContent = 'Please select a file';
+                // Check if we have either a pasted image or a selected file
+                if (!pastedImageFile && !fileInput.files.length) {
+                    statusDiv.textContent = 'Please select a file or paste an image';
                     statusDiv.className = 'status error';
                     statusDiv.style.display = 'block';
                     return;
                 }
 
                 const formData = new FormData();
-                formData.append('file', fileInput.files[0]);
+
+                // Use pasted image if available, otherwise use the file input
+                if (pastedImageFile) {
+                    formData.append('file', pastedImageFile);
+                } else {
+                    formData.append('file', fileInput.files[0]);
+                }
 
                 try {
                     // Step 1: Upload the file
-                    statusDiv.innerHTML = '<div class="spinner" class></div>Uploading file...';
+                    statusDiv.innerHTML = '<div class="spinner" ></div><span>Uploading file...</span>';
                     statusDiv.className = 'status processing';
-                    statusDiv.style.display = 'block';
+                    statusDiv.style.display = 'inline-block';
 
                     const uploadResponse = await fetch('/upload', {
                         method: 'POST',
@@ -127,7 +257,7 @@
                     const filepath = uploadData.filepath;
 
                     // Step 2: Process the receipt
-                    statusDiv.innerHTML = `<div class="spinner"></div>${uploadData.message}`;
+                    statusDiv.innerHTML = `<div class="spinner"></div><span>${uploadData.message}</span>`;
 
                     const processResponse = await fetch('/process_receipt', {
                         method: 'POST',
@@ -145,7 +275,7 @@
                     const processData = await processResponse.json();
 
                     // Step 3: Create the expense
-                    statusDiv.innerHTML = `<div class="spinner"></div>${processData.message}`;
+                    statusDiv.innerHTML = `<div class="spinner"></div><span>${processData.message}</span>`;
 
                     const createResponse = await fetch('/create_expense', {
                         method: 'POST',
@@ -169,8 +299,10 @@
                     statusDiv.innerHTML = `Success! Expense created with ID: ${createData.expense_id}<br><br>${createData.human_readable_confirmation.replace(/\n/g, '<br>')}`;
                     statusDiv.className = 'status success';
 
-                    // Reset the file input
+                    // Reset the file input and pasted image
                     fileInput.value = '';
+                    pastedImageFile = null;
+                    document.getElementById('previewContainer').style.display = 'none';
 
                 } catch (error) {
                     statusDiv.textContent = `Error: ${error.message}`;

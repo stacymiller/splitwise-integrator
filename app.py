@@ -113,6 +113,7 @@ def extract_receipt_info(file_path):
         "'total' (as a string, using a dot as decimal separator), "
         "'merchant' (as description), "
         "'currency_code' (e.g., 'EUR', 'USD'), "
+        "'notes' (if there are any specific notes like invoice number, payment period, etc.)"
         "'category' (one of the following exact category names, choose the most appropriate):\n" +
         categories_str + "\n\n"
         "DO NOT INCLUDE any explanation, markdown, or extra text. "
@@ -176,7 +177,12 @@ def extract_receipt_info(file_path):
     )
 
     try:
-        return json.loads(response.choices[0].message.content)
+        json_str = response.choices[0].message.content
+        if json_str.startswith("```json"):
+            json_str = json_str[len("```json"):]
+        if json_str.endswith("```"):
+            json_str = json_str[:-len("```")]
+        return json.loads(json_str)
     except:
         logging.error(f"Error parsing response: {response.choices[0].message.content}")
         return None
@@ -353,6 +359,9 @@ def create_expense():
         expense.setGroupId(int(os.getenv('SPLITWISE_GROUP_ID')))
         expense.setCurrencyCode(receipt_info['currency_code'])
         expense.setSplitEqually(True)
+
+        if 'notes' in receipt_info:
+            expense.setDetails(receipt_info['notes'])
 
         # Set category if available
         if 'category' in receipt_info:
