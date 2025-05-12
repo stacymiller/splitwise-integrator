@@ -4,4 +4,5 @@ splitwise>=3.0.0
 Pillow
 openai
 python-magic==0.4.27
-requests==2.31.0 
+requests==2.31.0
+PyPDF2

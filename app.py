@@ -1,5 +1,6 @@
 import logging
 import os
+import mimetypes
 from datetime import datetime
 
 from flask import Flask, render_template, request, jsonify, send_from_directory, redirect, session, url_for
@@ -13,6 +14,9 @@ import openai
 import json
 import requests
 import secrets
+import base64
+import io
+import PyPDF2
 
 # Load environment variables
 load_dotenv()
@@ -87,60 +91,95 @@ def attach_receipt_to_expense(expense_id, receipt_path):
 
         return response.json()
 
-def extract_receipt_info(image_path):
+def extract_receipt_info(file_path):
     """Extract information from receipt using OpenAI's vision model"""
     if not CATEGORIES:
         init_categories()
     categories_str = ", ".join(cat['name'] for cat in CATEGORIES)
-    with Image.open(image_path) as img:
-        # Convert image to base64
-        import base64
-        import io
-        buffered = io.BytesIO()
-        img.save(buffered, format="PNG")
-        img_str = base64.b64encode(buffered.getvalue()).decode()
 
-        initial_prompt = (
-                                "Extract the following information from this receipt: "
-                                "date, total amount, merchant name, currency code, and category. If the merchant is part of the store chain, like Jumbo or Albert Heijn, include only the chain name."
-                                "Return ONLY valid JSON with the following keys: "
-                                "'date' (in ISO format with as many details as possible), "
-                                "'total' (as a string, using a dot as decimal separator), "
-                                "'merchant' (as description), "
-                                "'currency_code' (e.g., 'EUR', 'USD'), "
-                                "'category' (one of the following exact category names, choose the most appropriate):\n" +
-                                categories_str + "\n\n"
-                                "Do not include any explanation, markdown, or extra text. "
-                                "Example: "
-                                "{\"date\": \"2024-01-01T16:45\", \"total\": \"12.34\", \"merchant\": \"Store Name\", \"currency_code\": \"EUR\", \"category\": \"Food & Drink / Groceries\"}"
-                            )
-        response = openai_client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": initial_prompt
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{img_str}"
-                            }
-                        }
-                    ]
+    # Determine file type
+    mime_type, _ = mimetypes.guess_type(file_path)
+    is_pdf = mime_type == 'application/pdf'
+
+    # Prepare content for OpenAI API
+    content_items = []
+
+    # Common prompt for both image and PDF
+    initial_prompt = (
+        "Extract the following information from this receipt: "
+        "date, total amount, merchant name, currency code, and category. If the merchant is part of the store chain, like Jumbo or Albert Heijn, include only the chain name."
+        "Return ONLY valid JSON with the following keys: "
+        "'date' (in ISO format with as many details as possible), "
+        "'total' (as a string, using a dot as decimal separator), "
+        "'merchant' (as description), "
+        "'currency_code' (e.g., 'EUR', 'USD'), "
+        "'category' (one of the following exact category names, choose the most appropriate):\n" +
+        categories_str + "\n\n"
+        "DO NOT INCLUDE any explanation, markdown, or extra text. "
+        "Example: "
+        "{\"date\": \"2024-01-01T16:45\", \"total\": \"12.34\", \"merchant\": \"Store Name\", \"currency_code\": \"EUR\", \"category\": \"Food & Drink / Groceries\"}"
+    )
+
+    content_items.append({
+        "type": "text",
+        "text": initial_prompt
+    })
+
+    if is_pdf:
+        # Handle PDF file
+        with open(file_path, 'rb') as file:
+            # Read the PDF file
+            pdf_reader = PyPDF2.PdfReader(file)
+
+            # Encode the PDF file as base64
+            file.seek(0)
+            pdf_bytes = file.read()
+            pdf_base64 = base64.b64encode(pdf_bytes).decode()
+
+            # Add the data URL prefix required by OpenAI API
+            pdf_data_url = f"data:application/pdf;base64,{pdf_base64}"
+
+            # Add the PDF file to the content items
+            content_items.append({
+                "type": "file",
+                "file": {
+                    "filename": os.path.basename(file_path),
+                    "file_data": pdf_data_url
                 }
-            ],
-            max_tokens=300
-        )
+            })
+    else:
+        # Handle image file
+        with Image.open(file_path) as img:
+            # Convert image to base64
+            buffered = io.BytesIO()
+            img.save(buffered, format="PNG")
+            img_str = base64.b64encode(buffered.getvalue()).decode()
 
-        try:
-            return json.loads(response.choices[0].message.content)
-        except:
-            logging.error(f"Error parsing response: {response.choices[0].message.content}")
-            return None
+            # Add the image to the content items
+            content_items.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{img_str}"
+                }
+            })
+
+    # Call OpenAI API
+    response = openai_client.chat.completions.create(
+        model="gpt-4o",  # Using gpt-4o as it supports both image and PDF inputs
+        messages=[
+            {
+                "role": "user",
+                "content": content_items
+            }
+        ],
+        max_tokens=300
+    )
+
+    try:
+        return json.loads(response.choices[0].message.content)
+    except:
+        logging.error(f"Error parsing response: {response.choices[0].message.content}")
+        return None
 
 def is_authenticated():
     """Check if the user is authenticated with Splitwise"""
