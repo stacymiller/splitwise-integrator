@@ -2,6 +2,12 @@
 <html>
 <head>
     <title>Splitwise Receipt Uploader</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap JS Bundle with Popper -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Meta tag for responsive design -->
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -91,6 +97,17 @@
             border-radius: 4px;
             background-color: #f9f9f9;
         }
+        #editReceiptForm {
+            display: none;
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
     </style>
 </head>
 <body>
@@ -112,6 +129,50 @@
         </form>
     </div>
     <div id="status" class="status" style="display: none;"></div>
+
+    <!-- Edit Receipt Form -->
+    <div id="editReceiptForm" class="container">
+        <h3>Review and Edit Receipt Details</h3>
+        <form id="receiptDetailsForm">
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label for="merchant" class="form-label">Merchant</label>
+                    <input type="text" class="form-control" id="merchant" name="merchant" required>
+                </div>
+                <div class="col-md-6">
+                    <label for="total" class="form-label">Total Amount</label>
+                    <div class="input-group">
+                        <input type="number" class="form-control" id="total" name="total" step="0.01" required>
+                        <span class="input-group-text" id="currency-addon">EUR</span>
+                    </div>
+                </div>
+            </div>
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label for="date" class="form-label">Date</label>
+                    <input type="datetime-local" class="form-control" id="date" name="date" required>
+                </div>
+                <div class="col-md-6">
+                    <label for="category" class="form-label">Category</label>
+                    <input type="text" class="form-control" id="category" name="category">
+                </div>
+            </div>
+            <div class="mb-3">
+                <label for="notes" class="form-label">Notes</label>
+                <textarea class="form-control" id="notes" name="notes" rows="2"></textarea>
+            </div>
+            <div class="mb-3">
+                <label for="currency_code" class="form-label">Currency</label>
+                <input type="text" class="form-control" id="currency_code" name="currency_code" required>
+            </div>
+            <input type="hidden" id="filepath" name="filepath">
+            <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                <button type="button" class="btn btn-secondary" id="cancelEdit">Cancel</button>
+                <button type="submit" class="btn btn-primary">Submit to Splitwise</button>
+            </div>
+        </form>
+    </div>
+
     {% else %}
     <div class="auth-container">
         <p>Please authenticate with Splitwise to use this application.</p>
@@ -122,6 +183,8 @@
     <script>
         // Variable to store the pasted image file
         let pastedImageFile = null;
+        // Variable to store the current filepath
+        let currentFilepath = null;
 
         // Function to handle paste events
         function handlePaste(e) {
@@ -151,6 +214,32 @@
                     break;
                 }
             }
+        }
+
+        // Function to format ISO date string to datetime-local input format
+        function formatDateForInput(isoString) {
+            if (!isoString) return '';
+            // Create a date object from the ISO string
+            const date = new Date(isoString);
+            // Format to YYYY-MM-DDThh:mm
+            return date.toISOString().slice(0, 16);
+        }
+
+        // Function to populate the edit form with receipt data
+        function populateEditForm(receiptInfo, filepath) {
+            document.getElementById('merchant').value = receiptInfo.merchant || '';
+            document.getElementById('total').value = receiptInfo.total || '';
+            document.getElementById('date').value = formatDateForInput(receiptInfo.date);
+            document.getElementById('category').value = receiptInfo.category || '';
+            document.getElementById('notes').value = receiptInfo.notes || '';
+            document.getElementById('currency_code').value = receiptInfo.currency_code || 'EUR';
+            document.getElementById('currency-addon').textContent = receiptInfo.currency_code || 'EUR';
+            document.getElementById('filepath').value = filepath;
+
+            // Show the edit form
+            document.getElementById('editReceiptForm').style.display = 'block';
+            // Hide the status div
+            document.getElementById('status').style.display = 'none';
         }
 
         // Add paste event listener to the document
@@ -211,6 +300,76 @@
             }
         }
 
+        // Handle cancel button in edit form
+        document.getElementById('cancelEdit').addEventListener('click', function() {
+            document.getElementById('editReceiptForm').style.display = 'none';
+            document.getElementById('status').style.display = 'block';
+            document.getElementById('status').innerHTML = 'Receipt processing cancelled';
+            document.getElementById('status').className = 'status';
+        });
+
+        // Handle edit form submission
+        document.getElementById('receiptDetailsForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const statusDiv = document.getElementById('status');
+
+            // Get form data
+            const receiptInfo = {
+                merchant: document.getElementById('merchant').value,
+                total: document.getElementById('total').value,
+                date: document.getElementById('date').value,
+                category: document.getElementById('category').value,
+                notes: document.getElementById('notes').value,
+                currency_code: document.getElementById('currency_code').value
+            };
+
+            const filepath = document.getElementById('filepath').value;
+
+            try {
+                // Hide the edit form
+                document.getElementById('editReceiptForm').style.display = 'none';
+
+                // Show processing status
+                statusDiv.innerHTML = '<div class="spinner"></div><span>Creating expense in Splitwise...</span>';
+                statusDiv.className = 'status processing';
+                statusDiv.style.display = 'inline-block';
+
+                // Create the expense with edited data
+                const createResponse = await fetch('/create_expense', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ 
+                        receipt_info: receiptInfo,
+                        filepath: filepath
+                    })
+                });
+
+                if (!createResponse.ok) {
+                    const errorData = await createResponse.json();
+                    throw new Error(errorData.error || 'Error creating expense');
+                }
+
+                const createData = await createResponse.json();
+
+                // Show success message
+                statusDiv.innerHTML = `Success! Expense created with ID: ${createData.expense_id}<br><br>${createData.human_readable_confirmation.replace(/\n/g, '<br>')}`;
+                statusDiv.className = 'status success';
+
+                // Reset the file input and pasted image
+                document.getElementById('fileInput').value = '';
+                pastedImageFile = null;
+                document.getElementById('previewContainer').style.display = 'none';
+
+            } catch (error) {
+                statusDiv.textContent = `Error: ${error.message}`;
+                statusDiv.className = 'status error';
+            }
+
+            statusDiv.style.display = 'block';
+        });
+
         const uploadForm = document.getElementById('uploadForm');
         if (uploadForm) {
             uploadForm.addEventListener('submit', async (e) => {
@@ -255,6 +414,7 @@
 
                     // Get the filepath from the response
                     const filepath = uploadData.filepath;
+                    currentFilepath = filepath;
 
                     // Step 2: Process the receipt
                     statusDiv.innerHTML = `<div class="spinner"></div><span>${uploadData.message}</span>`;
@@ -274,42 +434,14 @@
 
                     const processData = await processResponse.json();
 
-                    // Step 3: Create the expense
-                    statusDiv.innerHTML = `<div class="spinner"></div><span>${processData.message}</span>`;
-
-                    const createResponse = await fetch('/create_expense', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({ 
-                            receipt_info: processData.receipt_info,
-                            filepath: filepath
-                        })
-                    });
-
-                    if (!createResponse.ok) {
-                        const errorData = await createResponse.json();
-                        throw new Error(errorData.error || 'Error creating expense');
-                    }
-
-                    const createData = await createResponse.json();
-
-                    // Show success message
-                    statusDiv.innerHTML = `Success! Expense created with ID: ${createData.expense_id}<br><br>${createData.human_readable_confirmation.replace(/\n/g, '<br>')}`;
-                    statusDiv.className = 'status success';
-
-                    // Reset the file input and pasted image
-                    fileInput.value = '';
-                    pastedImageFile = null;
-                    document.getElementById('previewContainer').style.display = 'none';
+                    // Instead of creating the expense immediately, show the edit form
+                    populateEditForm(processData.receipt_info, filepath);
 
                 } catch (error) {
                     statusDiv.textContent = `Error: ${error.message}`;
                     statusDiv.className = 'status error';
+                    statusDiv.style.display = 'block';
                 }
-
-                statusDiv.style.display = 'block';
             });
         }
     </script>

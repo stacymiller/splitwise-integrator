@@ -113,7 +113,7 @@ def extract_receipt_info(file_path):
         "'total' (as a string, using a dot as decimal separator), "
         "'merchant' (as description), "
         "'currency_code' (e.g., 'EUR', 'USD'), "
-        "'notes' (if there are any specific notes like invoice number, payment period, etc.)"
+        "'notes' (if there are any specific notes like invoice number, payment period, the name of a specific store from the chain, etc.; also include the generic description of the expense if this is something different from groceries)"
         "'category' (one of the following exact category names, choose the most appropriate):\n" +
         categories_str + "\n\n"
         "DO NOT INCLUDE any explanation, markdown, or extra text. "
@@ -352,7 +352,14 @@ def create_expense():
         expense.setCost(receipt_info['total'])
         expense.setDescription(receipt_info['merchant'])
 
-        timestamp = datetime.fromisoformat(receipt_info['date'])
+        # Handle date format from the form (YYYY-MM-DDThh:mm) or from LLM (ISO format)
+        try:
+            # Try parsing as ISO format first
+            timestamp = datetime.fromisoformat(receipt_info['date'])
+        except ValueError:
+            # If that fails, try parsing as YYYY-MM-DDThh:mm
+            timestamp = datetime.strptime(receipt_info['date'], '%Y-%m-%dT%H:%M')
+
         timestamp = timestamp.astimezone()
         expense.setDate(timestamp.isoformat(timespec='seconds'))
 
@@ -360,11 +367,11 @@ def create_expense():
         expense.setCurrencyCode(receipt_info['currency_code'])
         expense.setSplitEqually(True)
 
-        if 'notes' in receipt_info:
+        if 'notes' in receipt_info and receipt_info['notes']:
             expense.setDetails(receipt_info['notes'])
 
         # Set category if available
-        if 'category' in receipt_info:
+        if 'category' in receipt_info and receipt_info['category']:
             category = get_category(receipt_info['category'])
             expense.setCategory(category)
 
@@ -388,6 +395,7 @@ Receipt Details:
 - Amount: {receipt_info['total']} {receipt_info['currency_code']}
 - Date: {timestamp.strftime('%B %d, %Y, %H:%M')}
 - Category: {receipt_info.get('category', 'Not available')}
+- Notes: {receipt_info.get('notes', 'Not available')}
 """
 
         return jsonify({
