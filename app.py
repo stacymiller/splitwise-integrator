@@ -17,6 +17,7 @@ import secrets
 import base64
 import io
 import PyPDF2
+import pillow_heif
 
 # Load environment variables
 load_dotenv()
@@ -128,41 +129,10 @@ def extract_receipt_info(file_path):
 
     if is_pdf:
         # Handle PDF file
-        with open(file_path, 'rb') as file:
-            # Read the PDF file
-            pdf_reader = PyPDF2.PdfReader(file)
-
-            # Encode the PDF file as base64
-            file.seek(0)
-            pdf_bytes = file.read()
-            pdf_base64 = base64.b64encode(pdf_bytes).decode()
-
-            # Add the data URL prefix required by OpenAI API
-            pdf_data_url = f"data:application/pdf;base64,{pdf_base64}"
-
-            # Add the PDF file to the content items
-            content_items.append({
-                "type": "file",
-                "file": {
-                    "filename": os.path.basename(file_path),
-                    "file_data": pdf_data_url
-                }
-            })
+        content_item = handle_pdf(file_path)
     else:
-        # Handle image file
-        with Image.open(file_path) as img:
-            # Convert image to base64
-            buffered = io.BytesIO()
-            img.save(buffered, format="PNG")
-            img_str = base64.b64encode(buffered.getvalue()).decode()
-
-            # Add the image to the content items
-            content_items.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{img_str}"
-                }
-            })
+        content_item = handle_image(file_path)
+    content_items.append(content_item)
 
     # Call OpenAI API
     response = openai_client.chat.completions.create(
@@ -186,6 +156,63 @@ def extract_receipt_info(file_path):
     except:
         logging.error(f"Error parsing response: {response.choices[0].message.content}")
         return None
+
+
+def handle_image(file_path):
+    file_lower = file_path.lower()
+    if file_lower.endswith('.heic') or file_lower.endswith('.heif'):
+        try:
+            heif_file = pillow_heif.read_heif(file_path)
+            img = Image.frombytes(
+                heif_file.mode,
+                heif_file.size,
+                heif_file.data,
+                "raw",
+                heif_file.mode,
+                heif_file.stride,
+            )
+        except Exception as e:
+            logging.error(f"Error processing HEIC file: {str(e)}")
+            raise ValueError(f"Failed to process HEIC file: {str(e)}")
+    else:
+        img = Image.open(file_path)
+    try:
+        buffered = io.BytesIO()
+        img.save(buffered, format="PNG")
+        img_str = base64.b64encode(buffered.getvalue()).decode()
+
+        return {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/png;base64,{img_str}"
+            }
+        }
+    finally:
+        img.close()
+
+
+def handle_pdf(file_path):
+    with open(file_path, 'rb') as file:
+        # Read the PDF file
+        # pdf_reader = PyPDF2.PdfReader(file)
+
+        # Encode the PDF file as base64
+        file.seek(0)
+        pdf_bytes = file.read()
+        pdf_base64 = base64.b64encode(pdf_bytes).decode()
+
+        # Add the data URL prefix required by OpenAI API
+        pdf_data_url = f"data:application/pdf;base64,{pdf_base64}"
+
+        # Add the PDF file to the content items
+        return {
+            "type": "file",
+            "file": {
+                "filename": os.path.basename(file_path),
+                "file_data": pdf_data_url
+            }
+        }
+
 
 def is_authenticated():
     """Check if the user is authenticated with Splitwise"""
