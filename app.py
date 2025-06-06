@@ -274,6 +274,17 @@ def logout():
     # Redirect to the index page
     return redirect(url_for('index'))
 
+@app.route('/categories')
+def get_categories():
+    """Return the list of categories as JSON"""
+    if not CATEGORIES:
+        # Initialize categories if not already done
+        if is_authenticated():
+            set_oauth2_token()
+        init_categories()
+    result = [dict(id=c['id'], name=c['name']) for c in sorted(CATEGORIES, key=lambda c: c['name'].lower())]
+    return jsonify(result)
+
 @app.route('/')
 def index():
     try:
