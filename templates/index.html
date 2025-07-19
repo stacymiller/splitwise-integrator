@@ -171,6 +171,48 @@
                 <label for="currency_code" class="form-label">Currency</label>
                 <input type="text" class="form-control" id="currency_code" name="currency_code" required>
             </div>
+            <div class="mb-3">
+                <label class="form-label">Split Options</label>
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="splitOption" id="splitEqual" value="equal" checked>
+                    <label class="form-check-label" for="splitEqual">
+                        Split equally (50/50)
+                    </label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="splitOption" id="splitYouPaid" value="youPaid">
+                    <label class="form-check-label" for="splitYouPaid">
+                        You paid, they owe X
+                    </label>
+                    <div class="input-group mt-2" id="youPaidContainer" style="display: none;">
+                        <span class="input-group-text">They owe</span>
+                        <input type="number" class="form-control" id="theyOwe" name="theyOwe" step="0.01" min="0">
+                        <span class="input-group-text" id="currency-addon-they-owe">EUR</span>
+                    </div>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="splitOption" id="splitTheyPaid" value="theyPaid">
+                    <label class="form-check-label" for="splitTheyPaid">
+                        They paid, you owe X
+                    </label>
+                    <div class="input-group mt-2" id="theyPaidContainer" style="display: none;">
+                        <span class="input-group-text">You owe</span>
+                        <input type="number" class="form-control" id="youOwe" name="youOwe" step="0.01" min="0">
+                        <span class="input-group-text" id="currency-addon-you-owe">EUR</span>
+                    </div>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="splitOption" id="splitPercentage" value="percentage">
+                    <label class="form-check-label" for="splitPercentage">
+                        Split by percentage
+                    </label>
+                    <div class="input-group mt-2" id="percentageContainer" style="display: none;">
+                        <span class="input-group-text">Your percentage</span>
+                        <input type="number" class="form-control" id="yourPercentage" name="yourPercentage" step="0.01" min="0" max="100" value="50">
+                        <span class="input-group-text">%</span>
+                    </div>
+                </div>
+            </div>
             <input type="hidden" id="filepath" name="filepath">
             <div class="d-grid gap-2 d-md-flex justify-content-md-end">
                 <button type="button" class="btn btn-secondary" id="cancelEdit">Cancel</button>
@@ -296,6 +338,15 @@
             document.getElementById('currency-addon').textContent = receiptInfo.currency_code || 'EUR';
             document.getElementById('filepath').value = filepath;
 
+            // Set default split option to equal
+            document.getElementById('splitEqual').checked = true;
+
+            // Update currency addon text for split options
+            updateCurrencyAddonText();
+
+            // Initialize split option containers
+            handleSplitOptionChange();
+
             // Show the edit form
             document.getElementById('editReceiptForm').style.display = 'block';
             // Hide the status div
@@ -307,7 +358,44 @@
             if (document.getElementById('category')) {
                 fetchCategories();
             }
+
+            // Set up split option radio button handlers
+            const splitOptions = document.querySelectorAll('input[name="splitOption"]');
+            splitOptions.forEach(option => {
+                option.addEventListener('change', handleSplitOptionChange);
+            });
+
+            // Initialize currency addon text for split options
+            updateCurrencyAddonText();
         });
+
+        // Function to handle split option changes
+        function handleSplitOptionChange() {
+            // Hide all containers first
+            document.getElementById('youPaidContainer').style.display = 'none';
+            document.getElementById('theyPaidContainer').style.display = 'none';
+            document.getElementById('percentageContainer').style.display = 'none';
+
+            // Show the appropriate container based on the selected option
+            const selectedOption = document.querySelector('input[name="splitOption"]:checked').value;
+            if (selectedOption === 'youPaid') {
+                document.getElementById('youPaidContainer').style.display = 'flex';
+            } else if (selectedOption === 'theyPaid') {
+                document.getElementById('theyPaidContainer').style.display = 'flex';
+            } else if (selectedOption === 'percentage') {
+                document.getElementById('percentageContainer').style.display = 'flex';
+            }
+        }
+
+        // Function to update currency addon text for split options
+        function updateCurrencyAddonText() {
+            const currencyCode = document.getElementById('currency_code').value || 'EUR';
+            document.getElementById('currency-addon-they-owe').textContent = currencyCode;
+            document.getElementById('currency-addon-you-owe').textContent = currencyCode;
+        }
+
+        // Update currency addon text when currency code changes
+        document.getElementById('currency_code').addEventListener('change', updateCurrencyAddonText);
 
         // Add paste event listener to the document
         document.addEventListener('paste', handlePaste);
@@ -389,6 +477,19 @@
                 notes: document.getElementById('notes').value,
                 currency_code: document.getElementById('currency_code').value
             };
+
+            // Get split option data
+            const selectedSplitOption = document.querySelector('input[name="splitOption"]:checked').value;
+            receiptInfo.splitOption = selectedSplitOption;
+
+            // Add additional split option data based on the selected option
+            if (selectedSplitOption === 'youPaid') {
+                receiptInfo.theyOwe = document.getElementById('theyOwe').value;
+            } else if (selectedSplitOption === 'theyPaid') {
+                receiptInfo.youOwe = document.getElementById('youOwe').value;
+            } else if (selectedSplitOption === 'percentage') {
+                receiptInfo.yourPercentage = document.getElementById('yourPercentage').value;
+            }
 
             const filepath = document.getElementById('filepath').value;
 
