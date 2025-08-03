@@ -1,9 +1,13 @@
 import os
 import secrets
 import logging
+import json
+import base64
+from datetime import datetime
 from flask import Flask, render_template, request, jsonify, redirect, session, url_for
 from werkzeug.utils import secure_filename
 import config
+from bot.telegram_bot import TelegramBot
 from core.receipt_processor import receipt_processor
 from core.splitwise_service import splitwise_service
 
@@ -40,30 +44,142 @@ def authorize():
 
 @app.route('/callback')
 def callback():
-    """Handle the OAuth2 callback"""
-    # Get the authorization code from the request
+    """Handle the OAuth2 callback for both web app and Telegram users"""
+    # Get the authorization code and state from the request
     code = request.args.get('code')
     state = request.args.get('state')
 
-    # Verify the state
-    if state != session.get('oauth2_state'):
-        return jsonify({'error': 'Invalid state parameter'}), 400
+    if not code:
+        return jsonify({'error': 'Missing code parameter'}), 400
 
-    # Exchange the authorization code for an access token
-    redirect_uri = url_for('callback', _external=True)
-    access_token = splitwise_service.get_oauth2_access_token(code, redirect_uri)
+    # Try to parse the state as JSON to extract user_id for Telegram flow
+    user_id = None
+    is_telegram_flow = False
 
-    if not access_token:
-        return jsonify({'error': 'Failed to get access token'}), 400
+    try:
+        # First check if this is a Telegram flow by trying to parse the state as base64-encoded JSON
+        # Decode the base64 string, then parse the JSON
+        decoded_state = base64.b64decode(state).decode('utf-8')
+        state_data = json.loads(decoded_state)
+        if isinstance(state_data, dict) and 'user_id' in state_data:
+            user_id = state_data['user_id']
+            is_telegram_flow = True
+    except (json.JSONDecodeError, TypeError, base64.binascii.Error):
+        # If state is not valid base64-encoded JSON or doesn't contain user_id, assume it's a web app flow
+        pass
 
-    # Store the access token in the session
-    session['oauth2_access_token'] = access_token
+    if is_telegram_flow:
+        # Telegram bot flow
+        if not user_id:
+            return jsonify({'error': 'Missing user_id in state parameter'}), 400
 
-    # Set the access token in the Splitwise client
-    splitwise_service.set_oauth2_token(access_token)
+        # Exchange the authorization code for an access token
+        redirect_uri = f"{config.WEB_APP_URL}/callback"
+        access_token = splitwise_service.get_oauth2_access_token(code, redirect_uri)
+
+        if not access_token:
+            return jsonify({'error': 'Failed to get access token'}), 400
+
+        # Notify the Telegram bot that the user has authenticated
+        try:
+            TelegramBot.notify_user_authenticated(user_id, access_token)
+        except Exception as e:
+            logging.error(f"Error notifying Telegram bot: {str(e)}")
+
+        # Return a success page for Telegram users
+        return render_template('telegram_success.html')
+    else:
+        # Web app flow
+        # Verify the state
+        if state != session.get('oauth2_state'):
+            return jsonify({'error': 'Invalid state parameter'}), 400
+
+        # Exchange the authorization code for an access token
+        redirect_uri = url_for('callback', _external=True)
+        access_token = splitwise_service.get_oauth2_access_token(code, redirect_uri)
+
+        if not access_token:
+            return jsonify({'error': 'Failed to get access token'}), 400
+
+        # Store the access token in the session
+        session['oauth2_access_token'] = access_token
+
+        # Set the access token in the Splitwise client
+        splitwise_service.set_oauth2_token(access_token)
+
+        # Redirect to the group selection page
+        return redirect(url_for('select_group'))
+
+
+@app.route('/select_group')
+def select_group():
+    """Show the group selection page"""
+    # Check if the user is authenticated
+    if not is_authenticated():
+        return redirect(url_for('authorize'))
+
+    # Set the OAuth2 token in the Splitwise client
+    set_oauth2_token()
+
+    # Get the list of groups
+    groups = splitwise_service.get_groups()
+
+    return render_template('select_group.html', groups=groups)
+
+@app.route('/set_group', methods=['POST'])
+def set_group():
+    """Set the selected group"""
+    # Check if the user is authenticated
+    if not is_authenticated():
+        return redirect(url_for('authorize'))
+
+    # Get the selected group ID from the form
+    group_id = request.form.get('group_id')
+    if not group_id:
+        return jsonify({'error': 'No group selected'}), 400
+
+    # Store the selected group ID in the session
+    session['splitwise_group_id'] = group_id
+
+    # Set the group ID in the Splitwise service
+    splitwise_service.set_current_group_id(group_id)
 
     # Redirect to the index page
     return redirect(url_for('index'))
+
+@app.route('/check_auth')
+def check_auth():
+    """Check if a Telegram user is authenticated"""
+    # Get the user_id from the request
+    user_id = request.args.get('user_id')
+
+    if not user_id:
+        return jsonify({'error': 'Missing user_id parameter'}), 400
+
+    # Check if there's a temporary session for this user
+    session_key = f"telegram_auth_{user_id}"
+    if session_key in session:
+        # Get the access token from the temporary session
+        auth_data = session[session_key]
+        access_token = auth_data.get('access_token')
+
+        # Remove the temporary session
+        session.pop(session_key, None)
+
+        return jsonify({
+            'authenticated': True,
+            'access_token': access_token
+        })
+
+    # No temporary session found
+    return jsonify({'authenticated': False})
+
+@app.route('/telegram_logout')
+def telegram_logout():
+    """Logout a Telegram user"""
+    # This endpoint is no longer needed as logout is handled by the bot
+    # using context.user_data, but we keep it for backward compatibility
+    return jsonify({'success': True, 'message': 'Logout is now handled by the bot'})
 
 @app.route('/logout')
 def logout():
@@ -91,6 +207,14 @@ def index():
         if authenticated:
             # Set the OAuth2 token in the Splitwise client
             set_oauth2_token()
+
+            # Check if a group has been selected
+            if 'splitwise_group_id' in session:
+                # Set the group ID in the Splitwise service
+                splitwise_service.set_current_group_id(session['splitwise_group_id'])
+            elif not request.path.startswith('/select_group'):
+                # If no group has been selected, redirect to the group selection page
+                return redirect(url_for('select_group'))
 
         return render_template('index.html', authenticated=authenticated)
     except Exception as e:
@@ -183,7 +307,7 @@ def create_expense():
     try:
         # Create the expense using the Splitwise service
         result = splitwise_service.create_expense(receipt_info, filepath)
-        
+
         return jsonify({
             'success': True,
             'expense_id': result['expense_id'],

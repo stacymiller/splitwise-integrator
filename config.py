@@ -15,6 +15,9 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 # Telegram Bot configuration
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 
+# Web app configuration
+WEB_APP_URL = os.getenv('WEB_APP_URL', 'http://localhost:5001')
+
 # Flask configuration
 UPLOAD_FOLDER = 'uploads'
 MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size

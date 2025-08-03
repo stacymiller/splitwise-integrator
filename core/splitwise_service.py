@@ -14,6 +14,7 @@ class SplitwiseService:
         self.categories = []
         self.users = []
         self.access_token = None
+        self.current_group_id = config.SPLITWISE_GROUP_ID  # Default group ID from config
 
     def set_oauth2_token(self, access_token):
         """Set the OAuth2 token in the Splitwise client"""
@@ -21,9 +22,16 @@ class SplitwiseService:
         self.client.setOAuth2AccessToken(access_token)
         return True
 
-    def get_oauth2_authorize_url(self, redirect_uri):
+    def set_current_group_id(self, group_id):
+        """Set the current group ID"""
+        self.current_group_id = group_id
+        # Clear the users list to force reloading with the new group
+        self.users = []
+        return True
+
+    def get_oauth2_authorize_url(self, redirect_uri, state=None):
         """Get the OAuth2 authorization URL"""
-        return self.client.getOAuth2AuthorizeURL(redirect_uri)
+        return self.client.getOAuth2AuthorizeURL(redirect_uri, state)
 
     def get_oauth2_access_token(self, code, redirect_uri):
         """Exchange the authorization code for an access token"""
@@ -60,7 +68,7 @@ class SplitwiseService:
     def init_users(self):
         """Initialize users from the specified group"""
         self.users = []
-        group = self.client.getGroup(int(config.SPLITWISE_GROUP_ID))
+        group = self.client.getGroup(int(self.current_group_id))
         for splitwise_user in group.members:
             user = ExpenseUser()
             user.setId(splitwise_user.getId())
@@ -76,6 +84,13 @@ class SplitwiseService:
         if not self.users:
             self.init_users()
         return self.users
+
+    def get_groups(self):
+        """Get all groups the user belongs to, sorted by number of participants (from one to many)"""
+        groups = self.client.getGroups()
+        # Sort groups by number of members (from one to many)
+        sorted_groups = sorted(groups, key=lambda g: len(g.getMembers()))
+        return [{'id': g.getId(), 'name': g.getName(), 'members_count': len(g.getMembers()), 'object': g} for g in sorted_groups]
 
     def create_expense(self, receipt_info, filepath=None):
         """Create an expense in Splitwise"""
@@ -95,7 +110,7 @@ class SplitwiseService:
         timestamp = timestamp.astimezone()
         expense.setDate(timestamp.isoformat(timespec='seconds'))
 
-        expense.setGroupId(int(config.SPLITWISE_GROUP_ID))
+        expense.setGroupId(int(self.current_group_id))
         expense.setCurrencyCode(receipt_info['currency_code'])
 
         # Handle split options
@@ -115,13 +130,13 @@ class SplitwiseService:
             else:
                 expense.setSplitEqually(False)
                 if len(users) != 2:
-                    raise ValueError(f'The group {config.SPLITWISE_GROUP_ID} contains {len(users)}. Custom splits are currently supported only for 2 users. Please adjust the split in the Splitwise app.')
-                
+                    raise ValueError(f'The group {self.current_group_id} contains {len(users)}. Custom splits are currently supported only for 2 users. Please adjust the split in the Splitwise app.')
+
                 current_user_id = self.client.getCurrentUser().getId()
                 current_user = [user for user in users if user.getId() == current_user_id]
                 if not current_user:
                     raise ValueError(f'Could not find current user {current_user_id} among the members of the group {[user["id"] for user in self.users]}')
-                
+
                 current_user = current_user[0]
                 other_user = [user for user in users if user.getId() != current_user_id][0]
                 expense.addUser(current_user)
@@ -210,7 +225,7 @@ Receipt Details:
     def attach_receipt_to_expense(self, expense_id, receipt_path):
         """Attach a receipt to an existing expense using the Splitwise API"""
         url = f"https://secure.splitwise.com/api/v3.0/update_expense/{expense_id}"
-        
+
         if not self.access_token:
             raise Exception("Not authenticated with Splitwise")
 
