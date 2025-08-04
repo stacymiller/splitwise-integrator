@@ -225,12 +225,14 @@ class TelegramBot:
             return SELECT_GROUP
 
     async def process_receipt(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Process a receipt photo."""
+        """Process a receipt photo or document (including PDF and various image formats)."""
         try:
             user_id = update.effective_user.id
+            logger.info(f"Processing receipt for user {user_id}")
 
             # Check if the user is authenticated
             if not self.is_authenticated(user_id, context):
+                logger.info(f"User {user_id} is not authenticated")
                 await update.message.reply_text(
                     "You need to login to Splitwise first. Please use the /login command."
                 )
@@ -238,6 +240,7 @@ class TelegramBot:
 
             # Check if the user has selected a group
             if not self.has_selected_group(user_id, context):
+                logger.info(f"User {user_id} has not selected a group")
                 await update.message.reply_text(
                     "You need to select a Splitwise group first. Please use the /change_group command."
                 )
@@ -256,70 +259,126 @@ class TelegramBot:
 
             await update.message.reply_text("Processing your receipt... Please wait.")
 
-            # 1. Download the photo
-            if not update.message.photo:
-                await update.message.reply_text("Please send a photo of your receipt.")
-                return ConversationHandler.END
-                
-            # Get the largest photo (last in the array)
-            photo_file = await update.message.photo[-1].get_file()
-            
-            # Create a temporary file path
+            # Import required modules
             import tempfile
             import os
+            import mimetypes
             
-            # Create a temporary file with a .jpg extension
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
-            temp_file_path = temp_file.name
-            temp_file.close()
+            # 1. Download the file (photo or document)
+            file_obj = None
+            original_filename = None
+            temp_file_path = None
             
-            # Download the photo to the temporary file
-            await photo_file.download_to_drive(temp_file_path)
+            try:
+                if update.message.photo:
+                    # Handle a photo: Get the largest photo (last in the array)
+                    file_obj = await update.message.photo[-1].get_file()
+                    mime_type = 'image/jpeg'
+                    suffix = '.jpg'
+                    original_filename = update.message.photo[-1].file_unique_id
+                    logger.info(f"Processing photo from user {user_id}")
+                elif update.message.document:
+                    # Handle a document: Get the document file
+                    file_obj = await update.message.document.get_file()
+                    original_filename = update.message.document.file_name
+                    logger.info(f"Processing document '{original_filename}' from user {user_id}")
+
+                    mime_type = update.message.document.mime_type
+                    suffix = mimetypes.guess_extension(mime_type)
+                else:
+                    logger.info(f"No photo or document found in message from user {user_id}")
+                    await update.message.reply_text("I cannot find a photo in the message. Please send a photo or document of your receipt.")
+                    return ConversationHandler.END
+
+                if not (mime_type.startswith('image/') or mime_type == 'application/pdf'):
+                    logger.warning(f"Unsupported file type: {mime_type}")
+                    await update.message.reply_text(f"The file you sent is {mime_type}. "
+                                                    f"I only support images and PDF files. "
+                                                    f"Please try again with a different file type!")
+                    return ConversationHandler.END
+                
+                # Create a temporary file with the appropriate extension
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+                temp_file_path = temp_file.name
+                temp_file.close()
+                logger.info(f"Created temporary file: {temp_file_path}")
+                
+                # Download the file to the temporary file
+                await file_obj.download_to_drive(temp_file_path)
+                logger.info(f"Downloaded {original_filename} to {temp_file_path}")
+            except Exception as e:
+                logger.error(f"Error processing file: {str(e)}")
+                await update.message.reply_text(
+                    "An error occurred while processing your file. Please try again with a different file."
+                )
+
+                if temp_file_path and os.path.exists(temp_file_path):
+                    try:
+                        os.unlink(temp_file_path)
+                        logger.info(f"Cleaned up temporary file after error: {temp_file_path}")
+                    except Exception as cleanup_error:
+                        logger.error(f"Error cleaning up temporary file: {str(cleanup_error)}")
+                return ConversationHandler.END
             
             # 2. Use receipt_processor to extract information
-            receipt_info = receipt_processor.extract_receipt_info(temp_file_path)
-            
-            # Store the receipt info in context.user_data for later use
-            if receipt_info:
-                context.user_data['receipt_info'] = receipt_info
+            try:
+                logger.info(f"Extracting receipt information from file: {temp_file_path}")
+                receipt_info = receipt_processor.extract_receipt_info(temp_file_path)
                 
-                # Format the date
-                date_str = receipt_info.get('date', '')
-                try:
-                    # Try to parse the ISO date format
-                    from datetime import datetime
-                    date_obj = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-                    formatted_date = date_obj.strftime('%B %d, %Y')
-                except:
-                    # If parsing fails, use the original string
-                    formatted_date = date_str
-                
-                # Format the currency and amount
-                currency_code = receipt_info.get('currency_code', 'EUR')
-                currency_symbol = '€' if currency_code == 'EUR' else ('$' if currency_code == 'USD' else currency_code)
-                amount = receipt_info.get('total', '0.00')
-                
-                # 3. Ask the user to confirm the extracted information
-                await update.message.reply_text(
-                    f"I've extracted the following information from your receipt:\n\n"
-                    f"Merchant: {receipt_info.get('merchant', 'Unknown')}\n"
-                    f"Amount: {currency_symbol}{amount}\n"
-                    f"Date: {formatted_date}\n\n"
-                    f"Is this correct? (Yes/No)"
-                )
-                
-                # Clean up the temporary file
-                try:
-                    os.unlink(temp_file_path)
-                except:
-                    pass
+                # Store the receipt info in context.user_data for later use
+                if receipt_info:
+                    logger.info(f"Successfully extracted receipt information: {receipt_info}")
+                    context.user_data['receipt_info'] = receipt_info
                     
-                return CONFIRM
-            else:
+                    # Format the date
+                    date_str = receipt_info.get('date', '')
+                    try:
+                        # Try to parse the ISO date format
+                        from datetime import datetime
+                        date_obj = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                        formatted_date = date_obj.strftime('%B %d, %Y')
+                    except Exception as e:
+                        logger.warning(f"Error formatting date '{date_str}': {str(e)}")
+                        # If parsing fails, use the original string
+                        formatted_date = date_str
+                    
+                    # Format the currency and amount
+                    currency_code = receipt_info.get('currency_code', 'EUR')
+                    currency_symbol = '€' if currency_code == 'EUR' else ('$' if currency_code == 'USD' else currency_code)
+                    amount = receipt_info.get('total', '0.00')
+                    
+                    # 3. Ask the user to confirm the extracted information
+                    await update.message.reply_text(
+                        f"I've extracted the following information from your receipt:\n\n"
+                        f"Merchant: {receipt_info.get('merchant', 'Unknown')}\n"
+                        f"Amount: {currency_symbol}{amount}\n"
+                        f"Date: {formatted_date}\n\n"
+                        f"Is this correct? (Yes/No)"
+                    )
+                    
+                    return CONFIRM
+                else:
+                    logger.warning(f"Failed to extract receipt information from file: {temp_file_path}")
+                    await update.message.reply_text(
+                        "I couldn't extract information from your receipt. Please try again with a clearer photo or a different file format."
+                    )
+                    return ConversationHandler.END
+            except Exception as e:
+                logger.error(f"Error extracting receipt information: {str(e)}")
                 await update.message.reply_text(
-                    "I couldn't extract information from your receipt. Please try again with a clearer photo."
+                    "An error occurred while processing your receipt. Please try again with a different file."
                 )
                 return ConversationHandler.END
+            finally:
+                # Always clean up the temporary file
+                if temp_file_path and os.path.exists(temp_file_path):
+                    try:
+                        os.unlink(temp_file_path)
+                        logger.info(f"Cleaned up temporary file: {temp_file_path}")
+                    except Exception as cleanup_error:
+                        logger.error(f"Error cleaning up temporary file: {str(cleanup_error)}")
+                else:
+                    logger.info("No temporary file to clean up")
         except Exception as e:
             logger.error(f"Error processing receipt: {e}")
             await update.message.reply_text(
