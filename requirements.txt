@@ -8,3 +8,4 @@ requests==2.31.0
 PyPDF2
 pillow-heif
 python-telegram-bot[job-queue]>=20.0
+dateutils

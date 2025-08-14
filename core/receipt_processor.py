@@ -4,6 +4,8 @@ import logging
 import base64
 import io
 import json
+
+import dateutil
 from PIL import Image
 import PyPDF2
 import pillow_heif
@@ -30,19 +32,18 @@ class ReceiptProcessor:
         # Common prompt for both image and PDF
         initial_prompt = (
             "Extract the following information from this receipt: "
-            "date, total amount, merchant name, currency code, and category. If the merchant is part of the store chain, like Jumbo or Albert Heijn, include only the chain name."
+            "date, total amount, merchant name, currency code, category, and how the expense should be split between two people in the current Splitwise group. If the merchant is part of a store chain (e.g., Jumbo, Albert Heijn), include only the chain name."
             "Return ONLY valid JSON with the following keys: "
             "'date' (in ISO format with as many details as possible), "
             "'total' (as a string, using a dot as decimal separator), "
             "'merchant' (as description), "
             "'currency_code' (e.g., 'EUR', 'USD'), "
-            "'notes' (if there are any specific notes like invoice number, payment period, the name of a specific store from the chain, etc.; also include the generic description of the expense if this is something different from groceries)"
+            "'notes' (if there are any specific notes like invoice number, payment period, the name of a specific store from the chain, etc.; also include the generic description of the expense if this is something different from groceries), "
             "'category' (one of the following exact category names, choose the most appropriate):\n" +
             categories_str + "\n\n"
             "DO NOT INCLUDE any explanation, markdown, or extra text. "
-            "DO NOT extract or include any split information, even if it appears on the receipt. Split information will be handled separately."
             "Example: "
-            "{\"date\": \"2024-01-01T16:45\", \"total\": \"12.34\", \"merchant\": \"Store Name\", \"currency_code\": \"EUR\", \"category\": \"Food & Drink / Groceries\"}"
+            "{\"date\": \"2024-01-01T16:45\", \"total\": \"12.34\", \"merchant\": \"Store Name\", \"currency_code\": \"EUR\", \"category\": \"Food & Drink / Groceries\", \"splitOption\": \"equal\"}"
         )
 
         content_items.append({
@@ -69,16 +70,14 @@ class ReceiptProcessor:
             max_tokens=300
         )
 
-        try:
-            json_str = response.choices[0].message.content
-            if json_str.startswith("```json"):
-                json_str = json_str[len("```json"):]
-            if json_str.endswith("```"):
-                json_str = json_str[:-len("```")]
-            return json.loads(json_str)
-        except:
-            logging.error(f"Error parsing response: {response.choices[0].message.content}")
-            return None
+        json_str = response.choices[0].message.content
+        if json_str.startswith("```json"):
+            json_str = json_str[len("```json"):]
+        if json_str.endswith("```"):
+            json_str = json_str[:-len("```")]
+        result = json.loads(json_str)
+        result['date'] = dateutil.parser.isoparse(result['date'])
+        return result
 
     def _handle_image(self, file_path):
         """Process image files (including HEIC/HEIF)"""
