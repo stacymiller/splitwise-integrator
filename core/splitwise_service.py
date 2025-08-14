@@ -99,16 +99,7 @@ class SplitwiseService:
         expense.setCost(receipt_info['total'])
         expense.setDescription(receipt_info['merchant'])
 
-        # Handle date format from the form (YYYY-MM-DDThh:mm) or from LLM (ISO format)
-        try:
-            # Try parsing as ISO format first
-            timestamp = datetime.fromisoformat(receipt_info['date'])
-        except ValueError:
-            # If that fails, try parsing as YYYY-MM-DDThh:mm
-            timestamp = datetime.strptime(receipt_info['date'], '%Y-%m-%dT%H:%M')
-
-        timestamp = timestamp.astimezone()
-        expense.setDate(timestamp.isoformat(timespec='seconds'))
+        expense.setDate(receipt_info['date'].isoformat(timespec='seconds'))
 
         expense.setGroupId(int(self.current_group_id))
         expense.setCurrencyCode(receipt_info['currency_code'])
@@ -210,7 +201,7 @@ class SplitwiseService:
 Receipt Details:
 - Merchant: {receipt_info['merchant']}
 - Amount: {receipt_info['total']} {receipt_info['currency_code']}
-- Date: {timestamp.strftime('%B %d, %Y, %H:%M')}
+- Date: {receipt_info['date'].strftime('%B %d, %Y, %H:%M')}
 - Category: {receipt_info.get('category', 'Not available')}
 - Notes: {receipt_info.get('notes', 'Not available')}
 - Split: {split_info}
