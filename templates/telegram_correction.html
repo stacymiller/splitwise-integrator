@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Correct Receipt</title>
+
+    <!-- Telegram Web App bridge -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+
+    <style>
+        :root { color-scheme: light dark; }
+        body {
+            margin: 0;
+            padding: 16px;
+            background: var(--tg-theme-bg-color, #ffffff);
+            color: var(--tg-theme-text-color, #222);
+            font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, Apple Color Emoji, Segoe UI Emoji, Segoe UI Symbol, sans-serif;
+        }
+        h2 { margin: 0 0 12px; color: var(--tg-theme-text-color, #222); }
+        .stack { display: grid; gap: 12px; }
+
+        /* Simple input styles for fallback using Telegram theme vars */
+        .group { display: grid; gap: 6px; }
+        label { color: var(--tg-theme-text-color, #222); font-weight: 600; }
+        input[type="text"], input[type="number"], input[type="date"], select {
+            width: 100%;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid var(--tg-theme-hint-color, #c2c2c2);
+            background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+            color: var(--tg-theme-text-color, #222);
+            outline: none;
+            box-sizing: border-box;
+        }
+        input::placeholder { color: var(--tg-theme-hint-color, #8e8e93); }
+        .row { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+        .btn {
+            padding: 12px 16px;
+            border: none;
+            border-radius: 10px;
+            width: 100%;
+            background: var(--tg-theme-button-color, #2ea6ff);
+            color: var(--tg-theme-button-text-color, #fff);
+            font-size: 16px;
+        }
+
+        /* Non-Telegram dark-mode preview fallback */
+        @media (prefers-color-scheme: dark) {
+            body { background: #0e1621; color: #e6eaf0; }
+            h2 { color: #e6eaf0; }
+        }
+    </style>
+</head>
+<body>
+<h2>Review and correct details</h2>
+
+
+<!-- Fallback plain HTML version (visible by default) -->
+<div class="stack" id="form-fallback">
+    <div class="group">
+        <label for="merchant__fallback">Merchant</label>
+        <input id="merchant__fallback" type="text" placeholder="Store name"/>
+    </div>
+
+    <div class="row">
+        <div class="group">
+            <label for="total__fallback">Total</label>
+            <input id="total__fallback" type="number" inputmode="decimal" step="0.01" placeholder="0.00"/>
+        </div>
+        <div class="group">
+            <label for="currency_code__fallback">Currency</label>
+            <input id="currency_code__fallback" type="text" maxlength="3" placeholder="EUR"/>
+        </div>
+    </div>
+
+    <div class="group">
+        <label for="date__fallback">Date</label>
+        <input id="date__fallback" type="date"/>
+    </div>
+
+    <div class="group">
+        <label for="category__fallback">Category</label>
+        <select id="category__fallback">
+            <option value="" selected disabled>Select category</option>
+        </select>
+    </div>
+
+    <div class="group">
+        <label for="notes__fallback">Notes (optional)</label>
+        <input id="notes__fallback" type="text" placeholder="Any details"/>
+    </div>
+
+    <button class="btn" id="submitBtn__fallback">Save and continue</button>
+</div>
+
+<script>
+    const tg = window.Telegram?.WebApp;
+
+    // Apply Telegram theme params so the UI picks them up
+    function applyTheme() {
+        if (!tg) return;
+        const tp = tg.themeParams || {};
+        const root = document.documentElement;
+        Object.entries(tp).forEach(([k, v]) => {
+            root.style.setProperty(`--tg-theme-${k.replace(/[A-Z]/g, m => '-' + m.toLowerCase())}`, v);
+        });
+    }
+
+    if (tg) {
+        tg.expand();
+        tg.MainButton.hide();
+        tg.enableClosingConfirmation();
+        tg.ready();
+        applyTheme();
+        tg.onEvent('themeChanged', applyTheme);
+    }
+
+    function b64ToJson(b64) {
+        try {
+            const json = atob(b64.replace(/-/g, '+').replace(/_/g, '/'));
+            return JSON.parse(json);
+        } catch (e) {
+            return {};
+        }
+    }
+
+    function toISODateString(d) {
+        if (!d) return '';
+        try {
+            const dt = new Date(d);
+            if (!isNaN(dt.getTime())) return dt.toISOString().substring(0, 10);
+        } catch (e) {}
+        return '';
+    }
+
+    // Prefill from ?data=
+    const params = new URLSearchParams(window.location.search);
+    const initial = params.get('data') ? b64ToJson(params.get('data')) : {};
+
+    function prefill() {
+        document.getElementById('merchant__fallback').value = initial.merchant || '';
+        document.getElementById('total__fallback').value = (initial.total !== undefined && initial.total !== null) ? String(initial.total) : '';
+        const cur = (initial.currency_code || initial.currency || 'EUR').toUpperCase();
+        document.getElementById('currency_code__fallback').value = cur;
+        document.getElementById('date__fallback').value = toISODateString(initial.date || initial.purchase_date);
+        document.getElementById('notes__fallback').value = initial.notes || '';
+
+        // Try to preselect category if provided
+        const select = document.getElementById('category__fallback');
+        const wantedId = (initial.category_id || initial.categoryId || null);
+        const wantedName = (initial.category_name || initial.category || null);
+        if (select) {
+            if (wantedId) {
+                const byId = Array.from(select.options).find(o => String(o.value) === String(wantedId));
+                if (byId) select.value = String(wantedId);
+            } else if (wantedName) {
+                const byName = Array.from(select.options).find(o => (o.textContent || '').toLowerCase() === String(wantedName).toLowerCase());
+                if (byName) select.value = byName.value;
+            }
+        }
+    }
+
+    function collectData() {
+        const categorySelect = document.getElementById('category__fallback');
+        const selectedCategoryName = categorySelect && categorySelect.value
+            ? (categorySelect.options[categorySelect.selectedIndex]?.textContent || null)
+            : null;
+        const selectedCategoryId = categorySelect && categorySelect.value ? categorySelect.value : null;
+        return {
+            merchant: document.getElementById('merchant__fallback').value?.trim() || null,
+            total: parseFloat(document.getElementById('total__fallback').value || '0') || 0,
+            currency_code: document.getElementById('currency_code__fallback').value?.trim().toUpperCase() || 'EUR',
+            date: document.getElementById('date__fallback').value || null,
+            notes: document.getElementById('notes__fallback').value?.trim() || null,
+            category: selectedCategoryName,
+            category_id: selectedCategoryId,
+            _source: 'telegram_web_app'
+        };
+    }
+
+    function bindSubmitHandlers() {
+        const btn = document.getElementById('submitBtn__fallback');
+        if (btn) {
+            btn.addEventListener('click', () => {
+                const data = collectData();
+                try {
+                    tg?.sendData(JSON.stringify(data));
+                } catch (e) {
+                    alert('Failed to send data to Telegram. Please try again.');
+                }
+            });
+        }
+    }
+
+    async function loadCategories() {
+        const select = document.getElementById('category__fallback');
+        if (!select) return;
+        try {
+            const res = await fetch('/categories');
+            if (!res.ok) throw new Error('Failed to load categories');
+            const cats = await res.json();
+            // remove all except placeholder
+            select.querySelectorAll('option:not([value=""])').forEach(o => o.remove());
+            cats.forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = String(c.id);
+                opt.textContent = c.name;
+                select.appendChild(opt);
+            });
+        } catch (e) {
+            // Leave the placeholder; user can proceed without selecting
+            console.warn('Could not load categories', e);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', async () => {
+        await loadCategories();
+        prefill();
+        bindSubmitHandlers();
+    });
+</script>
+</body>
+</html>

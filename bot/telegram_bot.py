@@ -6,8 +6,8 @@ import mimetypes
 import os
 
 import requests
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
+from telegram import Update, ReplyKeyboardRemove, WebAppInfo, KeyboardButton, ReplyKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 
 import config
 from core.receipt_processor import receipt_processor
@@ -326,19 +326,34 @@ class TelegramBot:
                 await update.message.reply_text(str(e))
                 return ConversationHandler.END
 
-            # Ask the user to confirm the extracted information using inline buttons (Yes/No only)
-            keyboard = [[
-                InlineKeyboardButton("Yes", callback_data="yes"),
-                InlineKeyboardButton("No", callback_data="no"),
+            # Ask the user to confirm the extracted information and offer a correction mini app
+            # Prepare a serializable copy of receipt_info for the web app
+            serializable_info = dict(receipt_info)
+            try:
+                if isinstance(serializable_info.get('date'), datetime.datetime):
+                    serializable_info['date'] = serializable_info['date'].date().isoformat()
+            except Exception:
+                pass
+            try:
+                info_b64 = base64.urlsafe_b64encode(json.dumps(serializable_info).encode('utf-8')).decode('utf-8')
+            except Exception:
+                info_b64 = ''
+            web_app_url = f"{config.WEB_APP_URL}/correct?data={info_b64}"
+
+            # Reply keyboard with Yes (text) and WebApp button for corrections
+            correction_keyboard = [[
+                KeyboardButton(text="Yes"),
+                KeyboardButton(text="Let me correct", web_app=WebAppInfo(url=web_app_url))
             ]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+            correction_reply_markup = ReplyKeyboardMarkup(correction_keyboard, resize_keyboard=True, one_time_keyboard=True)
+
             await update.message.reply_text(
-                f"I've extracted the following information from your receipt:\n\n"
+                "I extracted the following information from your receipt:\n\n"
                 f"Merchant: {receipt_info.get('merchant', 'Unknown')}\n"
                 f"Amount: {receipt_info.get('total', '0.00')}{receipt_info.get('currency_code', 'EUR')}\n"
                 f"Date: {receipt_info['date'].strftime('%B %d, %Y')}\n\n"
-                f"Is this correct?",
-                reply_markup=reply_markup
+                "Is this correct?",
+                reply_markup=correction_reply_markup
             )
 
             return CONFIRM
@@ -389,19 +404,14 @@ class TelegramBot:
         if access_token:
             splitwise_service.set_oauth2_token(access_token)
 
-        cq = update.callback_query
-        await cq.answer()
-        # Hide the inline keyboard once it has been used
-        try:
-            await cq.edit_message_reply_markup(reply_markup=None)
-        except Exception as e:
-            logger.warning(f"Failed to remove inline keyboard: {e}")
-        data = (cq.data or '').lower()
-        if data == 'yes':
-            # Proceed to create the expense directly using the extracted split info from receipt_info
+        # Handle simple text confirmation from reply keyboard
+        text = (update.message.text or '').strip().lower() if update.message else ''
+        if text == 'yes':
+            # Proceed to create the expense directly using the extracted info
             if 'receipt_info' not in context.user_data:
                 await msg_target.reply_text(
-                    "Sorry, I couldn't find your receipt information. Please try again."
+                    "Sorry, I couldn't find your receipt information. Please try again.",
+                    reply_markup=ReplyKeyboardRemove()
                 )
                 _cleanup_persisted()
                 return ConversationHandler.END
@@ -412,13 +422,14 @@ class TelegramBot:
                 result = splitwise_service.create_expense(receipt_info)
             except Exception as e:
                 logger.error(f"Error uploading expense: {str(e)}")
-                await msg_target.reply_text(f"Error uploading expense: {str(e)}")
+                await msg_target.reply_text(f"Error uploading expense: {str(e)}", reply_markup=ReplyKeyboardRemove())
                 _cleanup_persisted()
                 return ConversationHandler.END
 
             if not result or 'human_readable_confirmation' not in result:
                 await msg_target.reply_text(
-                    "An error occurred while creating the expense. Please try again."
+                    "An error occurred while creating the expense. Please try again.",
+                    reply_markup=ReplyKeyboardRemove()
                 )
                 _cleanup_persisted()
                 return ConversationHandler.END
@@ -438,16 +449,142 @@ class TelegramBot:
             await msg_target.reply_text(
                 "Expense added to Splitwise successfully!\n\n"
                 f"{result['human_readable_confirmation']}"
-                f"{attachment_note}"
+                f"{attachment_note}",
+                reply_markup=ReplyKeyboardRemove()
             )
             _cleanup_persisted()
             return ConversationHandler.END
         else:
             await msg_target.reply_text(
-                "I'm sorry about that. Please send the receipt again or try taking a clearer photo."
+                "No worries. You can tap 'Let me correct' to adjust details, or send the receipt again.",
+                reply_markup=ReplyKeyboardRemove()
             )
             _cleanup_persisted()
             return ConversationHandler.END
+
+    async def handle_web_app_data(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Handle data returned by the Telegram Web App (mini app)."""
+        logger.info("Received data from the web app")
+        user_id = update.effective_user.id
+        message = update.message
+        if not message or not getattr(message, 'web_app_data', None):
+            return ConversationHandler.END
+
+        # Ensure authentication
+        if not self.is_authenticated(user_id, context):
+            await message.reply_text("You need to login to Splitwise first. Please use the /login command.", reply_markup=ReplyKeyboardRemove())
+            return ConversationHandler.END
+
+        access_token = self.get_access_token(user_id, context)
+        if access_token:
+            splitwise_service.set_oauth2_token(access_token)
+
+        # Parse incoming JSON
+        try:
+            incoming = json.loads(message.web_app_data.data)
+        except Exception as e:
+            await message.reply_text(f"Failed to parse data from the app: {e}", reply_markup=ReplyKeyboardRemove())
+            return ConversationHandler.END
+
+        # Merge/replace receipt_info
+        current = context.user_data.get('receipt_info', {})
+        receipt_info = dict(current)
+        # Apply incoming values
+        for k, v in incoming.items():
+            if v is not None:
+                receipt_info[k] = v
+
+        # Normalize fields
+        # date -> datetime
+        try:
+            d = receipt_info.get('date')
+            if isinstance(d, str) and d:
+                try:
+                    # Prefer YYYY-MM-DD
+                    from datetime import datetime as _dt
+                    receipt_info['date'] = _dt.strptime(d, "%Y-%m-%d")
+                except Exception:
+                    from datetime import datetime as _dt
+                    receipt_info['date'] = _dt.fromisoformat(d)
+        except Exception:
+            # Fallback to today if missing/invalid
+            from datetime import datetime as _dt
+            receipt_info['date'] = _dt.now()
+
+        # currency code normalize
+        if 'currency_code' in receipt_info and isinstance(receipt_info['currency_code'], str):
+            receipt_info['currency_code'] = receipt_info['currency_code'].upper()
+
+        # total to string/float
+        if 'total' in receipt_info:
+            try:
+                # Splitwise expects a stringifiable cost; keep numeric precision as string
+                receipt_info['total'] = str(float(receipt_info['total']))
+            except Exception:
+                receipt_info['total'] = str(receipt_info['total'])
+
+        # Persist back to context
+        context.user_data['receipt_info'] = receipt_info
+
+        # Create the expense
+        try:
+            result = splitwise_service.create_expense(receipt_info)
+        except Exception as e:
+            logging.error(f"Error uploading expense after correction: {e}")
+            await message.reply_text(f"Error uploading expense: {e}", reply_markup=ReplyKeyboardRemove())
+            # Cleanup persisted data and file
+            receipt_file_path = context.user_data.get('receipt_file_path')
+            if receipt_file_path and os.path.exists(receipt_file_path):
+                try:
+                    os.unlink(receipt_file_path)
+                except Exception:
+                    pass
+            context.user_data.pop('receipt_file_path', None)
+            context.user_data.pop('receipt_info', None)
+            return ConversationHandler.END
+
+        if not result or 'human_readable_confirmation' not in result:
+            await message.reply_text("An error occurred while creating the expense. Please try again.", reply_markup=ReplyKeyboardRemove())
+            # Cleanup
+            receipt_file_path = context.user_data.get('receipt_file_path')
+            if receipt_file_path and os.path.exists(receipt_file_path):
+                try:
+                    os.unlink(receipt_file_path)
+                except Exception:
+                    pass
+            context.user_data.pop('receipt_file_path', None)
+            context.user_data.pop('receipt_info', None)
+            return ConversationHandler.END
+
+        # Try to attach the receipt file to Splitwise expense if we have it
+        receipt_file_path = context.user_data.get('receipt_file_path')
+        if receipt_file_path:
+            try:
+                splitwise_service.attach_receipt_to_expense(result['expense_id'], receipt_file_path)
+                attachment_note = "\nReceipt image/PDF has been attached to the expense."
+            except Exception as attach_err:
+                logging.error(f"Failed to attach receipt for expense {result['expense_id']}: {attach_err}")
+                attachment_note = f"\nNote: failed to attach receipt: {attach_err}"
+        else:
+            attachment_note = "\nNote: No receipt file was found to attach."
+
+        await message.reply_text(
+            "Expense added to Splitwise successfully!\n\n"
+            f"{result['human_readable_confirmation']}"
+            f"{attachment_note}",
+            reply_markup=ReplyKeyboardRemove()
+        )
+
+        # Cleanup context
+        if receipt_file_path and os.path.exists(receipt_file_path):
+            try:
+                os.unlink(receipt_file_path)
+            except Exception:
+                pass
+        context.user_data.pop('receipt_file_path', None)
+        context.user_data.pop('receipt_info', None)
+
+        return ConversationHandler.END
 
 
     async def change_group(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -582,9 +719,13 @@ class TelegramBot:
                 MessageHandler(filters.PHOTO | filters.ATTACHMENT, self.process_receipt)
             ],
             states={
-                CONFIRM: [CallbackQueryHandler(self.confirm_receipt, pattern="^(yes|no)$")]
+                CONFIRM: [
+                    MessageHandler((filters.TEXT & ~filters.COMMAND) & filters.Regex("(?i)^yes$"), self.confirm_receipt),
+                    MessageHandler(filters.StatusUpdate.WEB_APP_DATA, self.handle_web_app_data)
+                ]
             },
-            fallbacks=[CommandHandler("cancel", self.cancel)]
+            fallbacks=[CommandHandler("cancel", self.cancel)],
+            block=False
         )
 
         TelegramBot._application.add_handler(conv_handler)
@@ -603,6 +744,21 @@ class TelegramBot:
         TelegramBot._application.add_handler(CommandHandler("login", self.login))
         TelegramBot._application.add_handler(CommandHandler("help", self.help_command))
         TelegramBot._application.add_handler(CommandHandler("logout", self.logout))
+
+        # Handle data sent from Telegram WebApp (mini app)
+        TelegramBot._application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, self.handle_web_app_data))
+
+        from telegram.ext import TypeHandler
+
+        async def _log_any(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            m = update.message
+            qa = update.callback_query
+            logging.info(
+                f"ANY update: has_message={bool(m)} has_web_app_data={bool(getattr(m, 'web_app_data', None))} "
+                f"has_callback={bool(qa)} chat_id={update.effective_chat.id if update.effective_chat else None}"
+            )
+
+        TelegramBot._application.add_handler(TypeHandler(Update, _log_any), group=1)
 
         # Start the Bot
         TelegramBot._application.run_polling()

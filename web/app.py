@@ -220,6 +220,16 @@ def index():
     except Exception as e:
         return f"Error rendering template: {str(e)}", 500
 
+@app.route('/correct')
+def correct():
+    """Render a minimal Telegram Web App page to correct receipt fields.
+    Expects an optional base64-url-encoded JSON in `data` query parameter to prefill fields.
+    """
+    try:
+        return render_template('telegram_correction.html')
+    except Exception as e:
+        return f"Error rendering correction template: {str(e)}", 500
+
 @app.route('/upload', methods=['POST'])
 def upload_file():
     # Check if the user is authenticated
