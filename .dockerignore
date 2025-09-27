@@ -1,0 +1,27 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Git and IDE
+.git/
+.gitignore
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Local data/uploads (mounted as volume at runtime)
+uploads/
+
+# Certificates/keys if any
+*.pem
