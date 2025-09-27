@@ -10,6 +10,7 @@ import config
 from bot.telegram_bot import TelegramBot
 from core.receipt_processor import receipt_processor
 from core.splitwise_service import splitwise_service
+from core.receipt_info import ReceiptInfo
 
 # Initialize Flask app
 app = Flask(__name__, template_folder='../templates')
@@ -55,6 +56,7 @@ def callback():
     # Try to parse the state as JSON to extract user_id for Telegram flow
     user_id = None
     is_telegram_flow = False
+    redirect_uri = f"{config.WEB_APP_URL}/callback"
 
     try:
         # First check if this is a Telegram flow by trying to parse the state as base64-encoded JSON
@@ -74,7 +76,6 @@ def callback():
             return jsonify({'error': 'Missing user_id in state parameter'}), 400
 
         # Exchange the authorization code for an access token
-        redirect_uri = f"{config.WEB_APP_URL}/callback"
         access_token = splitwise_service.get_oauth2_access_token(code, redirect_uri)
 
         if not access_token:
@@ -108,7 +109,7 @@ def callback():
         splitwise_service.set_oauth2_token(access_token)
 
         # Redirect to the group selection page
-        return redirect(url_for('select_group'))
+        return redirect(url_for('index'))
 
 
 @app.route('/select_group')
@@ -287,7 +288,7 @@ def process_receipt():
             response = jsonify({
                 'status': 'processing',
                 'message': 'Sending receipt to Splitwise...',
-                'receipt_info': receipt_info
+                'receipt_info': receipt_info.to_dict()
             })
             response.status_code = 202  # Accepted
             return response

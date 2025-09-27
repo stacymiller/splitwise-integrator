@@ -92,21 +92,25 @@ class SplitwiseService:
         sorted_groups = sorted(groups, key=lambda g: len(g.getMembers()))
         return [{'id': g.getId(), 'name': g.getName(), 'members_count': len(g.getMembers()), 'object': g} for g in sorted_groups]
 
-    def create_expense(self, receipt_info, filepath=None):
+    def create_expense(self, receipt_info: ReceiptInfo, filepath=None):
         """Create an expense in Splitwise"""
         # Create expense object
         expense = Expense()
-        expense.setCost(receipt_info['total'])
-        expense.setDescription(receipt_info['merchant'])
+        expense.setCost(receipt_info.total)
+        expense.setDescription(receipt_info.merchant)
 
-        expense.setDate(receipt_info['date'].isoformat(timespec='seconds'))
+        if isinstance(receipt_info.date, datetime):
+            expense.setDate(receipt_info.date.isoformat(timespec='seconds'))
+        else:
+            # fallback
+            expense.setDate(str(receipt_info.date))
 
         expense.setGroupId(int(self.current_group_id))
-        expense.setCurrencyCode(receipt_info['currency_code'])
+        expense.setCurrencyCode(receipt_info.currency_code)
 
         # Handle split options
-        if 'splitOption' in receipt_info:
-            split_option = receipt_info['splitOption']
+        split_option = receipt_info.splitOption
+        if split_option:
 
             # Initialize users if not already done
             if not self.users:

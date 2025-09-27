@@ -60,39 +60,39 @@
 <!-- Fallback plain HTML version (visible by default) -->
 <div class="stack" id="form-fallback">
     <div class="group">
-        <label for="merchant__fallback">Merchant</label>
-        <input id="merchant__fallback" type="text" placeholder="Store name"/>
+        <label for="merchant">Merchant</label>
+        <input id="merchant" type="text" placeholder="Store name"/>
     </div>
 
     <div class="row">
         <div class="group">
-            <label for="total__fallback">Total</label>
-            <input id="total__fallback" type="number" inputmode="decimal" step="0.01" placeholder="0.00"/>
+            <label for="total">Total</label>
+            <input id="total" type="number" inputmode="decimal" step="0.01" placeholder="0.00"/>
         </div>
         <div class="group">
-            <label for="currency_code__fallback">Currency</label>
-            <input id="currency_code__fallback" type="text" maxlength="3" placeholder="EUR"/>
+            <label for="currency_code">Currency</label>
+            <input id="currency_code" type="text" maxlength="3" placeholder="EUR"/>
         </div>
     </div>
 
     <div class="group">
-        <label for="date__fallback">Date</label>
-        <input id="date__fallback" type="date"/>
+        <label for="date">Date</label>
+        <input id="date" type="date"/>
     </div>
 
     <div class="group">
-        <label for="category__fallback">Category</label>
-        <select id="category__fallback">
+        <label for="category">Category</label>
+        <select id="category">
             <option value="" selected disabled>Select category</option>
         </select>
     </div>
 
     <div class="group">
-        <label for="notes__fallback">Notes (optional)</label>
-        <input id="notes__fallback" type="text" placeholder="Any details"/>
+        <label for="notes">Notes (optional)</label>
+        <input id="notes" type="text" placeholder="Any details"/>
     </div>
 
-    <button class="btn" id="submitBtn__fallback">Save and continue</button>
+    <button class="btn" id="submitBtn">Save and continue</button>
 </div>
 
 <script>
@@ -140,15 +140,15 @@
     const initial = params.get('data') ? b64ToJson(params.get('data')) : {};
 
     function prefill() {
-        document.getElementById('merchant__fallback').value = initial.merchant || '';
-        document.getElementById('total__fallback').value = (initial.total !== undefined && initial.total !== null) ? String(initial.total) : '';
+        document.getElementById('merchant').value = initial.merchant || '';
+        document.getElementById('total').value = (initial.total !== undefined && initial.total !== null) ? String(initial.total) : '';
         const cur = (initial.currency_code || initial.currency || 'EUR').toUpperCase();
-        document.getElementById('currency_code__fallback').value = cur;
-        document.getElementById('date__fallback').value = toISODateString(initial.date || initial.purchase_date);
-        document.getElementById('notes__fallback').value = initial.notes || '';
+        document.getElementById('currency_code').value = cur;
+        document.getElementById('date').value = toISODateString(initial.date || initial.purchase_date);
+        document.getElementById('notes').value = initial.notes || '';
 
         // Try to preselect category if provided
-        const select = document.getElementById('category__fallback');
+        const select = document.getElementById('category');
         const wantedId = (initial.category_id || initial.categoryId || null);
         const wantedName = (initial.category_name || initial.category || null);
         if (select) {
@@ -163,17 +163,17 @@
     }
 
     function collectData() {
-        const categorySelect = document.getElementById('category__fallback');
+        const categorySelect = document.getElementById('category');
         const selectedCategoryName = categorySelect && categorySelect.value
             ? (categorySelect.options[categorySelect.selectedIndex]?.textContent || null)
             : null;
         const selectedCategoryId = categorySelect && categorySelect.value ? categorySelect.value : null;
         return {
-            merchant: document.getElementById('merchant__fallback').value?.trim() || null,
-            total: parseFloat(document.getElementById('total__fallback').value || '0') || 0,
-            currency_code: document.getElementById('currency_code__fallback').value?.trim().toUpperCase() || 'EUR',
-            date: document.getElementById('date__fallback').value || null,
-            notes: document.getElementById('notes__fallback').value?.trim() || null,
+            merchant: document.getElementById('merchant').value?.trim() || null,
+            total: parseFloat(document.getElementById('total').value || '0') || 0,
+            currency_code: document.getElementById('currency_code').value?.trim().toUpperCase() || 'EUR',
+            date: document.getElementById('date').value || null,
+            notes: document.getElementById('notes').value?.trim() || null,
             category: selectedCategoryName,
             category_id: selectedCategoryId,
             _source: 'telegram_web_app'
@@ -181,7 +181,7 @@
     }
 
     function bindSubmitHandlers() {
-        const btn = document.getElementById('submitBtn__fallback');
+        const btn = document.getElementById('submitBtn');
         if (btn) {
             btn.addEventListener('click', () => {
                 const data = collectData();
@@ -195,7 +195,7 @@
     }
 
     async function loadCategories() {
-        const select = document.getElementById('category__fallback');
+        const select = document.getElementById('category');
         if (!select) return;
         try {
             const res = await fetch('/categories');

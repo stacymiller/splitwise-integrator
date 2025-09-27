@@ -12,12 +12,13 @@ import pillow_heif
 import openai
 import config
 from core.splitwise_service import splitwise_service
+from core.receipt_info import ReceiptInfo
 
 class ReceiptProcessor:
     def __init__(self):
         self.openai_client = openai.OpenAI(api_key=config.OPENAI_API_KEY)
 
-    def extract_receipt_info(self, file_path):
+    def extract_receipt_info(self, file_path) -> ReceiptInfo:
         """Extract information from receipt using OpenAI's vision model"""
         categories = splitwise_service.get_categories()
         categories_str = ", ".join(cat['name'] for cat in categories)
@@ -76,8 +77,14 @@ class ReceiptProcessor:
         if json_str.endswith("```"):
             json_str = json_str[:-len("```")]
         result = json.loads(json_str)
-        result['date'] = dateutil.parser.isoparse(result['date'])
-        return result
+        # Build strictly typed data class
+        try:
+            # Normalize date via dataclass constructor
+            return ReceiptInfo.from_dict(result)
+        except Exception as e:
+            logging.error(f"Failed to parse receipt info JSON into ReceiptInfo: {e}")
+            # best effort: wrap parsed fields
+            return ReceiptInfo.from_dict(result)
 
     def _handle_image(self, file_path):
         """Process image files (including HEIC/HEIF)"""
