@@ -174,12 +174,15 @@ class TelegramBot:
         context.user_data['groups'] = groups
 
         # Create a message with the list of groups
-        message = "Please select a group by sending its number:\n\n"
-        for i, group in enumerate(groups, 1):
-            message += f"{i}. {group['name']} ({group['members_count']} members)\n"
+        message = "Please select a group:\n\n"
 
         logger.info(f"Sending group selection message: {message}")
-        await update.message.reply_text(message)
+        # Build a reply keyboard with numeric buttons for groups
+        buttons = [KeyboardButton(f"{i+1} – {group['name']} ({group['members_count']} members)") for i, group in enumerate(groups)]
+        # Arrange buttons in rows of 3
+        keyboard = [buttons[i:i+3] for i in range(0, len(buttons), 3)]
+        reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+        await update.message.reply_text(message, reply_markup=reply_markup)
 
         logger.info(f"Returning SELECT_GROUP ({SELECT_GROUP} to handle the selection")
         return SELECT_GROUP
@@ -198,7 +201,7 @@ class TelegramBot:
 
         # Get the selected group number
         try:
-            selection = int(update.message.text.strip())
+            selection = int(update.message.text.strip().split()[0])
             groups = context.user_data.get('groups', [])
 
             if not groups or selection < 1 or selection > len(groups):
@@ -218,7 +221,8 @@ class TelegramBot:
 
             await update.message.reply_text(
                 f"You have selected the group: {selected_group['name']}\n\n"
-                "You can now start sending receipts."
+                "You can now start sending receipts.",
+                reply_markup=ReplyKeyboardRemove()
             )
 
             return ConversationHandler.END
