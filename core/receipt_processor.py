@@ -1,3 +1,4 @@
+import datetime
 import os
 import mimetypes
 import logging
@@ -34,6 +35,7 @@ class ReceiptProcessor:
         initial_prompt = (
             "Extract the following information from this receipt: "
             "date, total amount, merchant name, currency code, category, and how the expense should be split between two people in the current Splitwise group. If the merchant is part of a store chain (e.g., Jumbo, Albert Heijn), include only the chain name."
+            "Receipt is relatively recent, today is " + datetime.datetime.now().strftime('%Y-%m-%d') + "."
             "Return ONLY valid JSON with the following keys: "
             "'date' (in ISO format with as many details as possible), "
             "'total' (as a string, using a dot as decimal separator), "
@@ -44,7 +46,7 @@ class ReceiptProcessor:
             categories_str + "\n\n"
             "DO NOT INCLUDE any explanation, markdown, or extra text. "
             "Example: "
-            "{\"date\": \"2024-01-01T16:45\", \"total\": \"12.34\", \"merchant\": \"Store Name\", \"currency_code\": \"EUR\", \"category\": \"Food & Drink / Groceries\", \"splitOption\": \"equal\"}"
+            "{\"date\": \"" + datetime.datetime.now().strftime('%Y-%m-%dT%H:%M') + "\", \"total\": \"12.34\", \"merchant\": \"Store Name\", \"currency_code\": \"EUR\", \"category\": \"Food & Drink / Groceries\", \"splitOption\": \"equal\"}"
         )
 
         content_items.append({
