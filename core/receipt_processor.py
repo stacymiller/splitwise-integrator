@@ -82,9 +82,7 @@ class ReceiptProcessor:
             # Normalize date via dataclass constructor
             return ReceiptInfo.from_dict(result)
         except Exception as e:
-            logging.error(f"Failed to parse receipt info JSON into ReceiptInfo: {e}")
-            # best effort: wrap parsed fields
-            return ReceiptInfo.from_dict(result)
+            raise ValueError(f"Failed to parse receipt info JSON into ReceiptInfo: {e}")
 
     def _handle_image(self, file_path):
         """Process image files (including HEIC/HEIF)"""

@@ -4,6 +4,7 @@ from splitwise.user import ExpenseUser
 import requests
 from datetime import datetime
 import config
+from core.receipt_info import ReceiptInfo
 
 class SplitwiseService:
     def __init__(self):
@@ -111,12 +112,9 @@ class SplitwiseService:
         # Handle split options
         split_option = receipt_info.splitOption
         if split_option:
-
-            # Initialize users if not already done
             if not self.users:
                 self.init_users()
 
-            # Create expense users for the split
             users = [user_data['object'] for user_data in self.users]
 
             if split_option == 'equal':
@@ -137,25 +135,25 @@ class SplitwiseService:
                 expense.addUser(current_user)
                 expense.addUser(other_user)
 
-                if split_option == 'youPaid' and 'theyOwe' in receipt_info:
-                    current_user.setPaidShare(receipt_info['total'])
-                    current_user.setOwedShare(float(receipt_info['total']) - float(receipt_info['theyOwe']))
+                if split_option == 'youPaid' and receipt_info.theyOwe is not None:
+                    current_user.setPaidShare(receipt_info.total)
+                    current_user.setOwedShare(float(receipt_info.total) - float(receipt_info.theyOwe))
                     other_user.setPaidShare(0)
-                    other_user.setOwedShare(receipt_info['theyOwe'])
-                elif split_option == 'theyPaid' and 'youOwe' in receipt_info:
+                    other_user.setOwedShare(receipt_info.theyOwe)
+                elif split_option == 'theyPaid' and receipt_info.youOwe is not None:
                     current_user.setPaidShare(0)
-                    current_user.setOwedShare(receipt_info['youOwe'])
-                    other_user.setPaidShare(receipt_info['total'])
-                    other_user.setOwedShare(float(receipt_info['total']) - float(receipt_info['youOwe']))
-                elif split_option == 'percentage' and 'yourPercentage' in receipt_info:
-                    your_percentage = float(receipt_info['yourPercentage'])
+                    current_user.setOwedShare(receipt_info.youOwe)
+                    other_user.setPaidShare(receipt_info.total)
+                    other_user.setOwedShare(float(receipt_info.total) - float(receipt_info.youOwe))
+                elif split_option == 'percentage' and receipt_info.yourPercentage is not None:
+                    your_percentage = float(receipt_info.yourPercentage)
                     their_percentage = 100 - your_percentage
 
-                    total_amount = float(receipt_info['total'])
+                    total_amount = float(receipt_info.total)
                     your_share = (your_percentage / 100) * total_amount
                     their_share = (their_percentage / 100) * total_amount
 
-                    current_user.setPaidShare(receipt_info['total'])
+                    current_user.setPaidShare(receipt_info.total)
                     current_user.setOwedShare(your_share)
                     other_user.setPaidShare(0)
                     other_user.setOwedShare(their_share)
@@ -166,12 +164,12 @@ class SplitwiseService:
             # Default to equal split if no split option is provided
             expense.setSplitEqually(True)
 
-        if 'notes' in receipt_info and receipt_info['notes']:
-            expense.setDetails(receipt_info['notes'])
+        if receipt_info.notes:
+            expense.setDetails(receipt_info.notes)
 
         # Set category if available
-        if 'category' in receipt_info and receipt_info['category']:
-            category = self.get_category_by_name(receipt_info['category'])
+        if receipt_info.category:
+            category = self.get_category_by_name(receipt_info.category)
             expense.setCategory(category)
 
         # Create the expense
@@ -190,30 +188,29 @@ class SplitwiseService:
 
         # Create a human-readable confirmation message
         split_info = "Split equally (50/50)"
-        if 'splitOption' in receipt_info:
-            split_option = receipt_info['splitOption']
-            if split_option == 'youPaid' and 'theyOwe' in receipt_info:
-                split_info = f"You paid, they owe {receipt_info['theyOwe']} {receipt_info['currency_code']}"
-            elif split_option == 'theyPaid' and 'youOwe' in receipt_info:
-                split_info = f"They paid, you owe {receipt_info['youOwe']} {receipt_info['currency_code']}"
-            elif split_option == 'percentage' and 'yourPercentage' in receipt_info:
-                your_percentage = float(receipt_info['yourPercentage'])
+        if receipt_info.splitOption:
+            if receipt_info.splitOption == 'youPaid' and receipt_info.theyOwe is not None:
+                split_info = f"You paid, they owe {receipt_info.theyOwe} {receipt_info.currency_code}"
+            elif receipt_info.splitOption == 'theyPaid' and receipt_info.youOwe is not None:
+                split_info = f"They paid, you owe {receipt_info.youOwe} {receipt_info.currency_code}"
+            elif receipt_info.splitOption == 'percentage' and receipt_info.yourPercentage is not None:
+                your_percentage = float(receipt_info.yourPercentage)
                 their_percentage = 100 - your_percentage
                 split_info = f"Split by percentage: You {your_percentage}%, They {their_percentage}%"
 
         human_readable = f"""
 Receipt Details:
-- Merchant: {receipt_info['merchant']}
-- Amount: {receipt_info['total']} {receipt_info['currency_code']}
-- Date: {receipt_info['date'].strftime('%B %d, %Y, %H:%M')}
-- Category: {receipt_info.get('category', 'Not available')}
-- Notes: {receipt_info.get('notes', 'Not available')}
+- Merchant: {receipt_info.merchant}
+- Amount: {receipt_info.total} {receipt_info.currency_code}
+- Date: {receipt_info.date.strftime('%B %d, %Y, %H:%M')}
+- Category: {receipt_info.category or 'Not available'}
+- Notes: {receipt_info.notes or 'Not available'}
 - Split: {split_info}
 """
 
         return {
             'expense_id': expense_response.getId(),
-            'receipt_info': receipt_info,
+            'receipt_info': receipt_info.to_dict(),
             'human_readable_confirmation': human_readable.strip()
         }
 

@@ -12,6 +12,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 import config
 from core.receipt_processor import receipt_processor
 from core.splitwise_service import splitwise_service
+from core.receipt_info import ReceiptInfo
 
 # Enable logging
 logging.basicConfig(
@@ -328,10 +329,11 @@ class TelegramBot:
 
             # Ask the user to confirm the extracted information and offer a correction mini app
             # Prepare a serializable copy of receipt_info for the web app
-            serializable_info = dict(receipt_info)
+            serializable_info = receipt_info.to_dict()
             try:
-                if isinstance(serializable_info.get('date'), datetime.datetime):
-                    serializable_info['date'] = serializable_info['date'].date().isoformat()
+                # Reduce date to date-only string for compactness
+                if isinstance(receipt_info.date, datetime.datetime):
+                    serializable_info['date'] = receipt_info.date.date().isoformat()
             except Exception:
                 pass
             try:
@@ -349,9 +351,12 @@ class TelegramBot:
 
             await update.message.reply_text(
                 "I extracted the following information from your receipt:\n\n"
-                f"Merchant: {receipt_info.get('merchant', 'Unknown')}\n"
-                f"Amount: {receipt_info.get('total', '0.00')}{receipt_info.get('currency_code', 'EUR')}\n"
-                f"Date: {receipt_info['date'].strftime('%B %d, %Y')}\n\n"
+                f"Merchant: {receipt_info.merchant}\n"
+                f"Amount: {receipt_info.total} {receipt_info.currency_code}\n"
+                f"Date: {receipt_info.date.strftime('%B %d, %Y') if hasattr(receipt_info, 'date') and receipt_info.date else 'Unknown'}\n"
+                f"Category: {receipt_info.category}\n"
+                f"Notes: {receipt_info.notes}\n"
+                f"Split: {receipt_info.splitOption}\n\n"
                 "Is this correct?",
                 reply_markup=correction_reply_markup
             )
@@ -486,49 +491,14 @@ class TelegramBot:
             await message.reply_text(f"Failed to parse data from the app: {e}", reply_markup=ReplyKeyboardRemove())
             return ConversationHandler.END
 
-        # Merge/replace receipt_info
-        current = context.user_data.get('receipt_info', {})
-        receipt_info = dict(current)
-        # Apply incoming values
-        for k, v in incoming.items():
-            if v is not None:
-                receipt_info[k] = v
-
-        # Normalize fields
-        # date -> datetime
-        try:
-            d = receipt_info.get('date')
-            if isinstance(d, str) and d:
-                try:
-                    # Prefer YYYY-MM-DD
-                    from datetime import datetime as _dt
-                    receipt_info['date'] = _dt.strptime(d, "%Y-%m-%d")
-                except Exception:
-                    from datetime import datetime as _dt
-                    receipt_info['date'] = _dt.fromisoformat(d)
-        except Exception:
-            # Fallback to today if missing/invalid
-            from datetime import datetime as _dt
-            receipt_info['date'] = _dt.now()
-
-        # currency code normalize
-        if 'currency_code' in receipt_info and isinstance(receipt_info['currency_code'], str):
-            receipt_info['currency_code'] = receipt_info['currency_code'].upper()
-
-        # total to string/float
-        if 'total' in receipt_info:
-            try:
-                # Splitwise expects a stringifiable cost; keep numeric precision as string
-                receipt_info['total'] = str(float(receipt_info['total']))
-            except Exception:
-                receipt_info['total'] = str(receipt_info['total'])
-
-        # Persist back to context
-        context.user_data['receipt_info'] = receipt_info
+        # Merge/replace receipt_info using the strict ReceiptInfo dataclass
+        current: ReceiptInfo = context.user_data.get('receipt_info')
+        current.update_from_dict(incoming)
+        context.user_data['receipt_info'] = current
 
         # Create the expense
         try:
-            result = splitwise_service.create_expense(receipt_info)
+            result = splitwise_service.create_expense(current)
         except Exception as e:
             logging.error(f"Error uploading expense after correction: {e}")
             await message.reply_text(f"Error uploading expense: {e}", reply_markup=ReplyKeyboardRemove())

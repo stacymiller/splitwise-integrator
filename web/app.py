@@ -309,13 +309,15 @@ def create_expense():
 
     # Get the receipt info and filepath from the request
     data = request.json
-    receipt_info = data.get('receipt_info')
+    receipt_info_data = data.get('receipt_info')
     filepath = data.get('filepath')
 
-    if not receipt_info or not filepath:
+    if not receipt_info_data or not filepath:
         return jsonify({'error': 'Missing receipt information or filepath'}), 400
 
     try:
+        # Convert incoming dict to ReceiptInfo
+        receipt_info = ReceiptInfo.from_dict(receipt_info_data)
         # Create the expense using the Splitwise service
         result = splitwise_service.create_expense(receipt_info, filepath)
 
