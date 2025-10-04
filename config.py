@@ -1,8 +1,17 @@
 import os
+from dataclasses import dataclass
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+
+@dataclass
+class AppMode:
+    dev = 'dev'
+    prod = 'prod'
+
+
+MODE = os.getenv('APP_MODE', 'dev')
+if MODE == AppMode.dev:
+    load_dotenv('debug.env')
 
 # Splitwise API configuration
 SPLITWISE_CONSUMER_KEY = os.getenv('SPLITWISE_CONSUMER_KEY')

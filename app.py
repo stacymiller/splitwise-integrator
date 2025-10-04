@@ -3,14 +3,8 @@ import threading
 import logging
 import config
 
-# Import from core module
-from core.receipt_processor import receipt_processor
-from core.splitwise_service import splitwise_service
-
-# Import from web module
 from web.app import app as web_app
 
-# Import from bot module
 from bot.telegram_bot import telegram_bot
 
 # Configure logging
@@ -28,7 +22,35 @@ def start_telegram_bot():
     """Start the Telegram bot"""
     telegram_bot.run()
 
+def cleanup():
+    """Cleanup function to stop tunnel on exit"""
+    global tunnel
+    if tunnel:
+        tunnel.stop()
+
 if __name__ == '__main__':
+    if config.MODE == config.AppMode.dev:
+        from tunnel_manager import CloudflareTunnel, update_splitwise_callback
+        import atexit
+
+        logger.info("Development mode enabled - starting cloudflared tunnel...")
+        tunnel = CloudflareTunnel(port=5001)
+
+        atexit.register(cleanup)
+
+        try:
+            public_url = tunnel.start()
+            config.WEB_APP_URL = public_url
+
+            logger.info("=" * 60)
+            logger.info("📝 TODO: Update the following:")
+            logger.info(f"1. BotFather Mini App URL: {public_url} at http://t.me/BotFather")
+            logger.info(f"2. Splitwise OAuth callback: {public_url}/callback at https://secure.splitwise.com/oauth_clients/8978/edit")
+            logger.info("=" * 60)
+        except Exception as e:
+            logger.error(f"Failed to start tunnel: {e}")
+            exit(1)
+
     # Check if Telegram bot token is set
     telegram_token = config.TELEGRAM_BOT_TOKEN
 
