@@ -147,11 +147,11 @@ class SplitwiseService:
                     other_user.setOwedShare(float(receipt_info.total) - float(receipt_info.youOwe))
                 elif split_option == 'percentage' and receipt_info.yourPercentage is not None:
                     your_percentage = float(receipt_info.yourPercentage)
-                    their_percentage = 100 - your_percentage
-
                     total_amount = float(receipt_info.total)
-                    your_share = (your_percentage / 100) * total_amount
-                    their_share = (their_percentage / 100) * total_amount
+                    
+                    # Round shares to 2 decimal places to match currency precision
+                    your_share = round((your_percentage / 100) * total_amount, 2)
+                    their_share = round(total_amount - your_share, 2)
 
                     current_user.setPaidShare(receipt_info.total)
                     current_user.setOwedShare(your_share)

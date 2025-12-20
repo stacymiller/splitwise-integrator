@@ -39,6 +39,61 @@
         .row { display: flex; flex-wrap: wrap; margin: 0 -6px; }
         .col { flex: 1 0 0%; padding: 0 6px; min-width: 0; }
         .mb-3 { margin-bottom: 14px; position: relative; }
+        
+        .form-check {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+            cursor: pointer;
+        }
+        
+        .form-check-input {
+            width: 20px;
+            height: 20px;
+            margin-right: 10px;
+            margin-top: 0;
+            cursor: pointer;
+            accent-color: var(--tg-theme-button-color, #2ea6ff);
+        }
+        
+        .form-check-label {
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        .split-container {
+            display: flex;
+            align-items: center;
+            background-color: var(--bs-secondary-bg);
+            border-radius: var(--bs-border-radius);
+            padding: 4px 12px;
+            margin-top: 8px;
+            margin-left: 30px;
+        }
+
+        .split-container .prefix {
+            font-size: 14px;
+            color: var(--tg-theme-hint-color, #999);
+            margin-right: 8px;
+            white-space: nowrap;
+        }
+
+        .split-container input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            padding: 8px 0;
+            font-size: 16px;
+            color: var(--bs-text);
+            outline: none;
+            min-width: 0;
+        }
+
+        .split-container .suffix {
+            font-size: 14px;
+            color: var(--tg-theme-hint-color, #999);
+            margin-left: 8px;
+        }
     
         .clear-btn {
             position: absolute;
@@ -161,6 +216,45 @@
         <textarea id="notes" class="form-control" rows="2" placeholder="Any details"></textarea>
     </div>
 
+    <div class="mb-3">
+        <label class="form-label">Split Options</label>
+        
+        <label class="form-check">
+            <input class="form-check-input" type="radio" name="splitOption" id="splitEqual" value="equal" checked>
+            <span class="form-check-label">Split equally (50/50)</span>
+        </label>
+
+        <label class="form-check">
+            <input class="form-check-input" type="radio" name="splitOption" id="splitYouPaid" value="youPaid">
+            <span class="form-check-label">You paid, they owe X</span>
+        </label>
+        <div class="split-container d-none" id="youPaidContainer">
+            <span class="prefix">They owe</span>
+            <input type="number" id="theyOwe" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
+            <span class="suffix cur-addon">EUR</span>
+        </div>
+
+        <label class="form-check">
+            <input class="form-check-input" type="radio" name="splitOption" id="splitTheyPaid" value="theyPaid">
+            <span class="form-check-label">They paid, you owe X</span>
+        </label>
+        <div class="split-container d-none" id="theyPaidContainer">
+            <span class="prefix">You owe</span>
+            <input type="number" id="youOwe" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
+            <span class="suffix cur-addon">EUR</span>
+        </div>
+
+        <label class="form-check">
+            <input class="form-check-input" type="radio" name="splitOption" id="splitPercentage" value="percentage">
+            <span class="form-check-label">Split by percentage</span>
+        </label>
+        <div class="split-container d-none" id="percentageContainer">
+            <span class="prefix">Your percentage</span>
+            <input type="number" id="yourPercentage" inputmode="decimal" step="0.01" min="0" max="100" value="50">
+            <span class="suffix">%</span>
+        </div>
+    </div>
+
     <button class="btn btn-primary mb-3 d-none" id="submitBtn">Save and continue</button>
 </div>
 
@@ -177,7 +271,8 @@
 
     function collectData() {
         const cat = document.getElementById('category');
-        return {
+        const splitOption = document.querySelector('input[name="splitOption"]:checked').value;
+        const data = {
             merchant: document.getElementById('merchant').value?.trim() || null,
             total: parseFloat(document.getElementById('total').value || '0') || 0,
             currency_code: document.getElementById('currency_code').value?.trim().toUpperCase() || 'EUR',
@@ -185,8 +280,15 @@
             notes: document.getElementById('notes').value?.trim() || null,
             category: cat.options[cat.selectedIndex]?.textContent || null,
             category_id: cat.value || null,
+            splitOption: splitOption,
             _source: 'telegram_web_app'
         };
+
+        if (splitOption === 'youPaid') data.theyOwe = parseFloat(document.getElementById('theyOwe').value) || 0;
+        if (splitOption === 'theyPaid') data.youOwe = parseFloat(document.getElementById('youOwe').value) || 0;
+        if (splitOption === 'percentage') data.yourPercentage = parseFloat(document.getElementById('yourPercentage').value) || 0;
+
+        return data;
     }
 
     const sendData = () => {
@@ -210,6 +312,23 @@
 
     async function init() {
         const select = document.getElementById('category');
+        const currencyInput = document.getElementById('currency_code');
+        
+        const updateCur = () => {
+            const cur = currencyInput.value?.trim().toUpperCase() || 'EUR';
+            document.querySelectorAll('.cur-addon').forEach(el => el.textContent = cur);
+        };
+        currencyInput.onchange = updateCur;
+        currencyInput.oninput = updateCur;
+
+        document.querySelectorAll('input[name="splitOption"]').forEach(el => {
+            el.onchange = () => {
+                document.querySelectorAll('.split-container').forEach(c => c.classList.add('d-none'));
+                const active = document.getElementById(el.value + 'Container');
+                if (active) active.classList.remove('d-none');
+            };
+        });
+
         try {
             const cats = await (await fetch('/categories')).json();
             cats.forEach(c => {
@@ -220,13 +339,26 @@
 
         document.getElementById('merchant').value = initial.merchant || '';
         document.getElementById('total').value = initial.total ?? '';
-        document.getElementById('currency_code').value = (initial.currency_code || initial.currency || 'EUR').toUpperCase();
+        currencyInput.value = (initial.currency_code || initial.currency || 'EUR').toUpperCase();
+        updateCur();
+        
         document.getElementById('date').value = initial.date ? new Date(initial.date).toISOString().substring(0, 10) : '';
         const notesEl = document.getElementById('notes');
         notesEl.value = initial.notes || '';
         
         if (initial.category_id) select.value = initial.category_id;
         
+        if (initial.splitOption) {
+            const radio = document.getElementById('split' + initial.splitOption.charAt(0).toUpperCase() + initial.splitOption.slice(1));
+            if (radio) {
+                radio.checked = true;
+                radio.dispatchEvent(new Event('change'));
+            }
+        }
+        if (initial.theyOwe) document.getElementById('theyOwe').value = initial.theyOwe;
+        if (initial.youOwe) document.getElementById('youOwe').value = initial.youOwe;
+        if (initial.yourPercentage) document.getElementById('yourPercentage').value = initial.yourPercentage;
+
         // Trigger clear button visibility check
         notesEl.dispatchEvent(new Event('input'));
     }
