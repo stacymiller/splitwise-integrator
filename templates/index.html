@@ -15,69 +15,7 @@
             margin: 0 auto;
             padding: 20px;
         }
-        .main-header {
-            text-align: center;
-        }
-        .upload-container {
-            border: 2px dashed #ccc;
-            padding: 20px;
-            text-align: center;
-            margin: 20px 0;
-        }
-        .status {
-            margin-top: 20px;
-            padding: 10px;
-            border-radius: 4px;
-        }
-        .success {
-            background-color: #d4edda;
-            color: #155724;
-        }
-        .error {
-            background-color: #f8d7da;
-            color: #721c24;
-        }
-        .processing {
-            background-color: #e2f3f5;
-            color: #0c5460;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .processing span {
-            vertical-align: middle;
-        }
-        .spinner {
-            border: 4px solid rgba(0, 0, 0, 0.1);
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            border-left-color: #09f;
-            animation: spin 1s linear infinite;
-            margin-right: 10px;
-            display: inline-block;
-            vertical-align: middle;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        .auth-container {
-            text-align: center;
-            margin: 20px 0;
-        }
-        .auth-button {
-            background-color: #4CAF50;
-            color: white;
-            padding: 10px 20px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
-        }
-        .auth-button:hover {
-            background-color: #45a049;
-        }
+        .main-header { text-align: center; }
         .upload-container {
             border: 2px dashed #ccc;
             padding: 20px;
@@ -86,31 +24,46 @@
             transition: all 0.3s ease;
             cursor: pointer;
         }
-        .upload-container:hover {
-            border-color: #4CAF50;
-            background-color: #f9f9f9;
+        .upload-container:hover { border-color: #4CAF50; background-color: #f9f9f9; }
+        .upload-container.dragover { border-color: #4CAF50; background-color: #f0f8f0; }
+        .status { margin-top: 20px; padding: 10px; border-radius: 4px; display: none; }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        .processing { background-color: #e2f3f5; color: #0c5460; display: flex; align-items: center; justify-content: center; }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1); width: 20px; height: 20px; border-radius: 50%;
+            border-left-color: #09f; animation: spin 1s linear infinite; margin-right: 10px; display: inline-block;
         }
-        .upload-container.dragover {
-            border-color: #4CAF50;
-            background-color: #f0f8f0;
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .auth-container { text-align: center; margin: 20px 0; }
+        .auth-button {
+            background-color: #4CAF50; color: white; padding: 10px 20px; border: none;
+            border-radius: 4px; cursor: pointer; font-size: 16px;
         }
-        #previewContainer {
-            border: 1px solid #ddd;
-            padding: 10px;
-            border-radius: 4px;
-            background-color: #f9f9f9;
+        .auth-button:hover { background-color: #45a049; }
+        #previewContainer, #editReceiptForm {
+            display: none; margin-top: 20px; padding: 15px; border: 1px solid #ddd;
+            border-radius: 4px; background-color: #f9f9f9;
         }
-        #editReceiptForm {
+        .notes-container { position: relative; }
+        .clear-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            width: 22px;
+            height: 22px;
             display: none;
-            margin-top: 20px;
-            padding: 15px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            background-color: #f9f9f9;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0,0,0,0.1);
+            color: #666;
+            border-radius: 50%;
+            cursor: pointer;
+            z-index: 2;
+            font-size: 14px;
+            line-height: 1;
         }
-        .form-group {
-            margin-bottom: 15px;
-        }
+        .clear-btn:hover { background: rgba(0,0,0,0.2); }
     </style>
 </head>
 <body>
@@ -125,15 +78,14 @@
             <input type="file" id="fileInput" accept="image/*,.pdf">
             <button type="submit">Upload Receipt</button>
             <p>or paste an image from clipboard (Ctrl+V / Cmd+V)</p>
-            <div id="previewContainer" style="display: none; margin-top: 10px;">
+            <div id="previewContainer">
                 <img id="imagePreview" style="max-width: 100%; max-height: 300px;">
                 <p>Image ready to upload</p>
             </div>
         </form>
     </div>
-    <div id="status" class="status" style="display: none;"></div>
+    <div id="status" class="status"></div>
 
-    <!-- Edit Receipt Form -->
     <div id="editReceiptForm" class="container">
         <h3>Review and Edit Receipt Details</h3>
         <form id="receiptDetailsForm">
@@ -146,7 +98,7 @@
                     <label for="total" class="form-label">Total Amount</label>
                     <div class="input-group">
                         <input type="number" class="form-control" id="total" name="total" step="0.01" required>
-                        <span class="input-group-text" id="currency-addon">EUR</span>
+                        <span class="input-group-text cur-addon">EUR</span>
                     </div>
                 </div>
             </div>
@@ -159,13 +111,15 @@
                     <label for="category" class="form-label">Category</label>
                     <select class="form-select" id="category" name="category">
                         <option value="">Select a category</option>
-                        <!-- Categories will be populated by JavaScript -->
                     </select>
                 </div>
             </div>
             <div class="mb-3">
                 <label for="notes" class="form-label">Notes</label>
-                <textarea class="form-control" id="notes" name="notes" rows="2"></textarea>
+                <div class="notes-container">
+                    <div id="clearNotes" class="clear-btn">&times;</div>
+                    <textarea class="form-control" id="notes" name="notes" rows="2"></textarea>
+                </div>
             </div>
             <div class="mb-3">
                 <label for="currency_code" class="form-label">Currency</label>
@@ -175,38 +129,30 @@
                 <label class="form-label">Split Options</label>
                 <div class="form-check">
                     <input class="form-check-input" type="radio" name="splitOption" id="splitEqual" value="equal" checked>
-                    <label class="form-check-label" for="splitEqual">
-                        Split equally (50/50)
-                    </label>
+                    <label class="form-check-label" for="splitEqual">Split equally (50/50)</label>
                 </div>
                 <div class="form-check">
                     <input class="form-check-input" type="radio" name="splitOption" id="splitYouPaid" value="youPaid">
-                    <label class="form-check-label" for="splitYouPaid">
-                        You paid, they owe X
-                    </label>
-                    <div class="input-group mt-2" id="youPaidContainer" style="display: none;">
+                    <label class="form-check-label" for="splitYouPaid">You paid, they owe X</label>
+                    <div class="input-group mt-2 split-container" id="youPaidContainer" style="display: none;">
                         <span class="input-group-text">They owe</span>
                         <input type="number" class="form-control" id="theyOwe" name="theyOwe" step="0.01" min="0">
-                        <span class="input-group-text" id="currency-addon-they-owe">EUR</span>
+                        <span class="input-group-text cur-addon">EUR</span>
                     </div>
                 </div>
                 <div class="form-check">
                     <input class="form-check-input" type="radio" name="splitOption" id="splitTheyPaid" value="theyPaid">
-                    <label class="form-check-label" for="splitTheyPaid">
-                        They paid, you owe X
-                    </label>
-                    <div class="input-group mt-2" id="theyPaidContainer" style="display: none;">
+                    <label class="form-check-label" for="splitTheyPaid">They paid, you owe X</label>
+                    <div class="input-group mt-2 split-container" id="theyPaidContainer" style="display: none;">
                         <span class="input-group-text">You owe</span>
                         <input type="number" class="form-control" id="youOwe" name="youOwe" step="0.01" min="0">
-                        <span class="input-group-text" id="currency-addon-you-owe">EUR</span>
+                        <span class="input-group-text cur-addon">EUR</span>
                     </div>
                 </div>
                 <div class="form-check">
                     <input class="form-check-input" type="radio" name="splitOption" id="splitPercentage" value="percentage">
-                    <label class="form-check-label" for="splitPercentage">
-                        Split by percentage
-                    </label>
-                    <div class="input-group mt-2" id="percentageContainer" style="display: none;">
+                    <label class="form-check-label" for="splitPercentage">Split by percentage</label>
+                    <div class="input-group mt-2 split-container" id="percentageContainer" style="display: none;">
                         <span class="input-group-text">Your percentage</span>
                         <input type="number" class="form-control" id="yourPercentage" name="yourPercentage" step="0.01" min="0" max="100" value="50">
                         <span class="input-group-text">%</span>
@@ -229,389 +175,114 @@
     {% endif %}
 
     <script>
-        // Variable to store the pasted image file
+        const $ = id => document.getElementById(id);
         let pastedImageFile = null;
-        // Variable to store the current filepath
-        let currentFilepath = null;
-        // Variable to store categories
-        let categories = [];
 
-        // Function to handle paste events
-        function handlePaste(e) {
-            const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+        const setStatus = (html, className = '') => {
+            const s = $('status');
+            s.innerHTML = html;
+            s.className = 'status ' + className;
+            s.style.display = 'block';
+        };
 
-            for (let i = 0; i < items.length; i++) {
-                if (items[i].type.indexOf('image') !== -1) {
-                    // Get the image file from clipboard
-                    const blob = items[i].getAsFile();
+        const updateCur = () => {
+            const cur = $('currency_code').value || 'EUR';
+            document.querySelectorAll('.cur-addon').forEach(el => el.textContent = cur);
+        };
 
-                    // Create a file with proper name and type
-                    const currentDate = new Date();
-                    const fileName = `pasted-image-${currentDate.getTime()}.png`;
-                    pastedImageFile = new File([blob], fileName, { type: 'image/png' });
+        const updateClearBtn = () => {
+            $('clearNotes').style.display = $('notes').value.length > 0 ? 'flex' : 'none';
+        };
 
-                    // Show preview
-                    const reader = new FileReader();
-                    reader.onload = function(event) {
-                        document.getElementById('imagePreview').src = event.target.result;
-                        document.getElementById('previewContainer').style.display = 'block';
-                    };
-                    reader.readAsDataURL(pastedImageFile);
-
-                    // Clear the file input to avoid confusion
-                    document.getElementById('fileInput').value = '';
-
-                    break;
-                }
-            }
-        }
-
-        // Function to format ISO date string to datetime-local input format
-        function formatDateForInput(isoString) {
-            if (!isoString) return '';
-            // Create a date object from the ISO string
-            const date = new Date(isoString);
-            // Format to YYYY-MM-DDThh:mm
-            return date.toISOString().slice(0, 16);
-        }
-
-        // Function to fetch categories from the backend and populate the dropdown
-        async function fetchCategories() {
+        async function init() {
+            if (!$('category')) return;
             try {
-                const response = await fetch('/categories');
-                if (!response.ok) {
-                    throw new Error('Failed to fetch categories');
-                }
-                categories = await response.json();
+                const cats = await (await fetch('/categories')).json();
+                const sel = $('category');
+                cats.forEach(c => sel.add(new Option(c.name, c.name)));
+            } catch (e) { console.error(e); }
 
-                // Populate the dropdown
-                const categorySelect = document.getElementById('category');
-                // Clear existing options except the first one
-                while (categorySelect.options.length > 1) {
-                    categorySelect.remove(1);
-                }
-
-                // Add categories to the dropdown
-                categories.forEach(category => {
-                    const option = document.createElement('option');
-                    option.value = category.name;
-                    option.textContent = category.name;
-                    categorySelect.appendChild(option);
-                });
-            } catch (error) {
-                console.error('Error fetching categories:', error);
-            }
-        }
-
-        // Function to populate the edit form with receipt data
-        function populateEditForm(receiptInfo, filepath) {
-            document.getElementById('merchant').value = receiptInfo.merchant || '';
-            document.getElementById('total').value = receiptInfo.total || '';
-            document.getElementById('date').value = formatDateForInput(receiptInfo.date);
-
-            // Set the category dropdown value
-            const categorySelect = document.getElementById('category');
-            if (receiptInfo.category) {
-                // Try to find the matching option
-                let found = false;
-                for (let i = 0; i < categorySelect.options.length; i++) {
-                    if (categorySelect.options[i].value === receiptInfo.category) {
-                        categorySelect.selectedIndex = i;
-                        found = true;
-                        break;
-                    }
-                }
-                // If not found, add it as a new option
-                if (!found && receiptInfo.category) {
-                    const option = document.createElement('option');
-                    option.value = receiptInfo.category;
-                    option.textContent = receiptInfo.category;
-                    categorySelect.appendChild(option);
-                    categorySelect.value = receiptInfo.category;
-                }
-            } else {
-                categorySelect.selectedIndex = 0;
-            }
-
-            document.getElementById('notes').value = receiptInfo.notes || '';
-            document.getElementById('currency_code').value = receiptInfo.currency_code || 'EUR';
-            document.getElementById('currency-addon').textContent = receiptInfo.currency_code || 'EUR';
-            document.getElementById('filepath').value = filepath;
-
-            // Set default split option to equal
-            document.getElementById('splitEqual').checked = true;
-
-            // Update currency addon text for split options
-            updateCurrencyAddonText();
-
-            // Initialize split option containers
-            handleSplitOptionChange();
-
-            // Show the edit form
-            document.getElementById('editReceiptForm').style.display = 'block';
-            // Hide the status div
-            document.getElementById('status').style.display = 'none';
-        }
-
-        // Fetch categories when the page loads
-        document.addEventListener('DOMContentLoaded', function() {
-            if (document.getElementById('category')) {
-                fetchCategories();
-            }
-
-            // Set up split option radio button handlers
-            const splitOptions = document.querySelectorAll('input[name="splitOption"]');
-            splitOptions.forEach(option => {
-                option.addEventListener('change', handleSplitOptionChange);
+            $('currency_code').onchange = updateCur;
+            $('notes').oninput = updateClearBtn;
+            $('clearNotes').onclick = () => { $('notes').value = ''; updateClearBtn(); $('notes').focus(); };
+            document.querySelectorAll('input[name="splitOption"]').forEach(el => {
+                el.onchange = () => {
+                    document.querySelectorAll('.split-container').forEach(c => c.style.display = 'none');
+                    const active = $(el.value + 'Container');
+                    if (active) active.style.display = 'flex';
+                };
             });
+        }
 
-            // Initialize currency addon text for split options
-            updateCurrencyAddonText();
-        });
-
-        // Function to handle split option changes
-        function handleSplitOptionChange() {
-            // Hide all containers first
-            document.getElementById('youPaidContainer').style.display = 'none';
-            document.getElementById('theyPaidContainer').style.display = 'none';
-            document.getElementById('percentageContainer').style.display = 'none';
-
-            // Show the appropriate container based on the selected option
-            const selectedOption = document.querySelector('input[name="splitOption"]:checked').value;
-            if (selectedOption === 'youPaid') {
-                document.getElementById('youPaidContainer').style.display = 'flex';
-            } else if (selectedOption === 'theyPaid') {
-                document.getElementById('theyPaidContainer').style.display = 'flex';
-            } else if (selectedOption === 'percentage') {
-                document.getElementById('percentageContainer').style.display = 'flex';
+        const handlePaste = e => {
+            const item = Array.from((e.clipboardData || e.originalEvent.clipboardData).items).find(i => i.type.includes('image'));
+            if (item) {
+                pastedImageFile = new File([item.getAsFile()], `pasted-${Date.now()}.png`, { type: 'image/png' });
+                const reader = new FileReader();
+                reader.onload = ev => { $('imagePreview').src = ev.target.result; $('previewContainer').style.display = 'block'; };
+                reader.readAsDataURL(pastedImageFile);
+                $('fileInput').value = '';
             }
-        }
+        };
 
-        // Function to update currency addon text for split options
-        function updateCurrencyAddonText() {
-            const currencyCode = document.getElementById('currency_code').value || 'EUR';
-            document.getElementById('currency-addon-they-owe').textContent = currencyCode;
-            document.getElementById('currency-addon-you-owe').textContent = currencyCode;
-        }
-
-        // Update currency addon text when currency code changes
-        document.getElementById('currency_code').addEventListener('change', updateCurrencyAddonText);
-
-        // Add paste event listener to the document
         document.addEventListener('paste', handlePaste);
-
-        // Also add it specifically to the paste area for better UX
-        const pasteArea = document.getElementById('pasteArea');
-        if (pasteArea) {
-            pasteArea.addEventListener('paste', handlePaste);
-
-            // Add click event to clear pasted image when clicking on the paste area
-            pasteArea.addEventListener('click', function(event) {
-                if (!event.target.closest('#previewContainer') && !event.target.closest('button')) {
-                    document.getElementById('previewContainer').style.display = 'none';
-                    pastedImageFile = null;
-                }
-            });
-
-            // Add drag and drop support
-            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-                pasteArea.addEventListener(eventName, preventDefaults, false);
-            });
-
-            function preventDefaults(e) {
-                e.preventDefault();
-                e.stopPropagation();
-            }
-
-            ['dragenter', 'dragover'].forEach(eventName => {
-                pasteArea.addEventListener(eventName, highlight, false);
-            });
-
-            ['dragleave', 'drop'].forEach(eventName => {
-                pasteArea.addEventListener(eventName, unhighlight, false);
-            });
-
-            function highlight() {
-                pasteArea.classList.add('dragover');
-            }
-
-            function unhighlight() {
-                pasteArea.classList.remove('dragover');
-            }
-
-            // Handle dropped files
-            pasteArea.addEventListener('drop', handleDrop, false);
-
-            function handleDrop(e) {
-                const dt = e.dataTransfer;
-                const files = dt.files;
-
-                if (files.length) {
-                    document.getElementById('fileInput').files = files;
-                    // Clear any pasted image
-                    pastedImageFile = null;
-                    document.getElementById('previewContainer').style.display = 'none';
-                }
-            }
-        }
-
-        // Handle cancel button in edit form
-        document.getElementById('cancelEdit').addEventListener('click', function() {
-            document.getElementById('editReceiptForm').style.display = 'none';
-            document.getElementById('status').style.display = 'block';
-            document.getElementById('status').innerHTML = 'Receipt processing cancelled';
-            document.getElementById('status').className = 'status';
-        });
-
-        // Handle edit form submission
-        document.getElementById('receiptDetailsForm').addEventListener('submit', async function(e) {
+        $('cancelEdit').onclick = () => { $('editReceiptForm').style.display = 'none'; setStatus('Cancelled'); };
+        
+        $('uploadForm').onsubmit = async e => {
             e.preventDefault();
-            const statusDiv = document.getElementById('status');
+            const file = pastedImageFile || $('fileInput').files[0];
+            if (!file) return setStatus('Select file or paste image', 'error');
 
-            // Get form data
-            const receiptInfo = {
-                merchant: document.getElementById('merchant').value,
-                total: document.getElementById('total').value,
-                date: document.getElementById('date').value,
-                category: document.getElementById('category').value,
-                notes: document.getElementById('notes').value,
-                currency_code: document.getElementById('currency_code').value
+            const fd = new FormData(); fd.append('file', file);
+            try {
+                setStatus('<div class="spinner"></div>Uploading...', 'processing');
+                const up = await (await fetch('/upload', { method: 'POST', body: fd })).json();
+                
+                setStatus('<div class="spinner"></div>Processing...', 'processing');
+                const pr = await (await fetch('/process_receipt', { 
+                    method: 'POST', headers: {'Content-Type': 'application/json'}, 
+                    body: JSON.stringify({ filepath: up.filepath }) 
+                })).json();
+
+                const r = pr.receipt_info;
+                $('merchant').value = r.merchant || '';
+                $('total').value = r.total || '';
+                $('date').value = r.date ? new Date(r.date).toISOString().slice(0, 16) : '';
+                $('notes').value = r.notes || '';
+                $('currency_code').value = r.currency_code || 'EUR';
+                $('filepath').value = up.filepath;
+                updateCur();
+                
+                $('editReceiptForm').style.display = 'block';
+                $('status').style.display = 'none';
+                updateClearBtn();
+            } catch (err) { setStatus(err.message, 'error'); }
+        };
+
+        $('receiptDetailsForm').onsubmit = async e => {
+            e.preventDefault();
+            const data = {
+                merchant: $('merchant').value, total: $('total').value, date: $('date').value,
+                category: $('category').value, notes: $('notes').value, currency_code: $('currency_code').value,
+                splitOption: document.querySelector('input[name="splitOption"]:checked').value
             };
-
-            // Get split option data
-            const selectedSplitOption = document.querySelector('input[name="splitOption"]:checked').value;
-            receiptInfo.splitOption = selectedSplitOption;
-
-            // Add additional split option data based on the selected option
-            if (selectedSplitOption === 'youPaid') {
-                receiptInfo.theyOwe = document.getElementById('theyOwe').value;
-            } else if (selectedSplitOption === 'theyPaid') {
-                receiptInfo.youOwe = document.getElementById('youOwe').value;
-            } else if (selectedSplitOption === 'percentage') {
-                receiptInfo.yourPercentage = document.getElementById('yourPercentage').value;
-            }
-
-            const filepath = document.getElementById('filepath').value;
+            if (data.splitOption === 'youPaid') data.theyOwe = $('theyOwe').value;
+            if (data.splitOption === 'theyPaid') data.youOwe = $('youOwe').value;
+            if (data.splitOption === 'percentage') data.yourPercentage = $('yourPercentage').value;
 
             try {
-                // Hide the edit form
-                document.getElementById('editReceiptForm').style.display = 'none';
+                $('editReceiptForm').style.display = 'none';
+                setStatus('<div class="spinner"></div>Creating expense...', 'processing');
+                const res = await (await fetch('/create_expense', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ receipt_info: data, filepath: $('filepath').value })
+                })).json();
+                setStatus(`Success! ID: ${res.expense_id}<br><br>${res.human_readable_confirmation.replace(/\n/g, '<br>')}`, 'success');
+                $('uploadForm').reset(); pastedImageFile = null; $('previewContainer').style.display = 'none';
+            } catch (err) { setStatus(err.message, 'error'); }
+        };
 
-                // Show processing status
-                statusDiv.innerHTML = '<div class="spinner"></div><span>Creating expense in Splitwise...</span>';
-                statusDiv.className = 'status processing';
-                statusDiv.style.display = 'inline-block';
-
-                // Create the expense with edited data
-                const createResponse = await fetch('/create_expense', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ 
-                        receipt_info: receiptInfo,
-                        filepath: filepath
-                    })
-                });
-
-                if (!createResponse.ok) {
-                    const errorData = await createResponse.json();
-                    throw new Error(errorData.error || 'Error creating expense');
-                }
-
-                const createData = await createResponse.json();
-
-                // Show success message
-                statusDiv.innerHTML = `Success! Expense created with ID: ${createData.expense_id}<br><br>${createData.human_readable_confirmation.replace(/\n/g, '<br>')}`;
-                statusDiv.className = 'status success';
-
-                // Reset the file input and pasted image
-                document.getElementById('fileInput').value = '';
-                pastedImageFile = null;
-                document.getElementById('previewContainer').style.display = 'none';
-
-            } catch (error) {
-                statusDiv.textContent = `Error: ${error.message}`;
-                statusDiv.className = 'status error';
-            }
-
-            statusDiv.style.display = 'block';
-        });
-
-        const uploadForm = document.getElementById('uploadForm');
-        if (uploadForm) {
-            uploadForm.addEventListener('submit', async (e) => {
-                e.preventDefault();
-                const fileInput = document.getElementById('fileInput');
-                const statusDiv = document.getElementById('status');
-
-                // Check if we have either a pasted image or a selected file
-                if (!pastedImageFile && !fileInput.files.length) {
-                    statusDiv.textContent = 'Please select a file or paste an image';
-                    statusDiv.className = 'status error';
-                    statusDiv.style.display = 'block';
-                    return;
-                }
-
-                const formData = new FormData();
-
-                // Use pasted image if available, otherwise use the file input
-                if (pastedImageFile) {
-                    formData.append('file', pastedImageFile);
-                } else {
-                    formData.append('file', fileInput.files[0]);
-                }
-
-                try {
-                    // Step 1: Upload the file
-                    statusDiv.innerHTML = '<div class="spinner" ></div><span>Uploading file...</span>';
-                    statusDiv.className = 'status processing';
-                    statusDiv.style.display = 'inline-block';
-
-                    const uploadResponse = await fetch('/upload', {
-                        method: 'POST',
-                        body: formData
-                    });
-
-                    if (!uploadResponse.ok) {
-                        const errorData = await uploadResponse.json();
-                        throw new Error(errorData.error || 'Error uploading file');
-                    }
-
-                    const uploadData = await uploadResponse.json();
-
-                    // Get the filepath from the response
-                    const filepath = uploadData.filepath;
-                    currentFilepath = filepath;
-
-                    // Step 2: Process the receipt
-                    statusDiv.innerHTML = `<div class="spinner"></div><span>${uploadData.message}</span>`;
-
-                    const processResponse = await fetch('/process_receipt', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({ filepath: filepath })
-                    });
-
-                    if (!processResponse.ok) {
-                        const errorData = await processResponse.json();
-                        throw new Error(errorData.error || 'Error processing receipt');
-                    }
-
-                    const processData = await processResponse.json();
-
-                    // Instead of creating the expense immediately, show the edit form
-                    populateEditForm(processData.receipt_info, filepath);
-
-                } catch (error) {
-                    statusDiv.textContent = `Error: ${error.message}`;
-                    statusDiv.className = 'status error';
-                    statusDiv.style.display = 'block';
-                }
-            });
-        }
+        init();
     </script>
 </body>
 </html> 
