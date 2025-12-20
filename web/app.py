@@ -34,7 +34,7 @@ def set_oauth2_token():
 def authorize():
     """Initiate the OAuth2 authorization flow"""
     # Generate the authorization URL
-    redirect_uri = url_for('callback', _external=True)
+    redirect_uri = f"{config.WEB_APP_URL}/callback"
     auth_url, state = splitwise_service.get_oauth2_authorize_url(redirect_uri)
 
     # Store the state in the session
@@ -96,7 +96,7 @@ def callback():
             return jsonify({'error': 'Invalid state parameter'}), 400
 
         # Exchange the authorization code for an access token
-        redirect_uri = url_for('callback', _external=True)
+        redirect_uri = f"{config.WEB_APP_URL}/callback"
         access_token = splitwise_service.get_oauth2_access_token(code, redirect_uri)
 
         if not access_token:
