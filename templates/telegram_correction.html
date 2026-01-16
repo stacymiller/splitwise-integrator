@@ -272,21 +272,50 @@
     function collectData() {
         const cat = document.getElementById('category');
         const splitOption = document.querySelector('input[name="splitOption"]:checked').value;
+        const total = parseFloat(document.getElementById('total').value || '0') || 0;
+        
         const data = {
             merchant: document.getElementById('merchant').value?.trim() || null,
-            total: parseFloat(document.getElementById('total').value || '0') || 0,
+            total: total.toString(),
             currency_code: document.getElementById('currency_code').value?.trim().toUpperCase() || 'EUR',
             date: document.getElementById('date').value || null,
             notes: document.getElementById('notes').value?.trim() || null,
             category: cat.options[cat.selectedIndex]?.textContent || null,
             category_id: cat.value || null,
-            splitOption: splitOption,
+            split_option: splitOption === 'equal' ? 'equal' : 'exact',
+            users: [],
             _source: 'telegram_web_app'
         };
 
-        if (splitOption === 'youPaid') data.theyOwe = parseFloat(document.getElementById('theyOwe').value) || 0;
-        if (splitOption === 'theyPaid') data.youOwe = parseFloat(document.getElementById('youOwe').value) || 0;
-        if (splitOption === 'percentage') data.yourPercentage = parseFloat(document.getElementById('yourPercentage').value) || 0;
+        const groupMembers = initial.group_members || [];
+        const currentUserId = initial.current_user_id;
+        const otherUser = groupMembers.find(u => u.id != currentUserId);
+
+        if (splitOption !== 'equal' && otherUser && currentUserId) {
+            let myPaid = "0", myOwed = "0", otherPaid = "0", otherOwed = "0";
+            
+            if (splitOption === 'youPaid') {
+                const theyOwe = parseFloat(document.getElementById('theyOwe').value) || 0;
+                myPaid = total.toFixed(2);
+                myOwed = (total - theyOwe).toFixed(2);
+                otherOwed = theyOwe.toFixed(2);
+            } else if (splitOption === 'theyPaid') {
+                const youOwe = parseFloat(document.getElementById('youOwe').value) || 0;
+                otherPaid = total.toFixed(2);
+                otherOwed = (total - youOwe).toFixed(2);
+                myOwed = youOwe.toFixed(2);
+            } else if (splitOption === 'percentage') {
+                const myPercent = parseFloat(document.getElementById('yourPercentage').value) || 0;
+                myPaid = total.toFixed(2);
+                myOwed = (total * myPercent / 100).toFixed(2);
+                otherOwed = (total - parseFloat(myOwed)).toFixed(2);
+            }
+
+            data.users = [
+                { user_id: parseInt(currentUserId), paid_share: myPaid, owed_share: myOwed },
+                { user_id: parseInt(otherUser.id), paid_share: otherPaid, owed_share: otherOwed }
+            ];
+        }
 
         return data;
     }
@@ -348,16 +377,29 @@
         
         if (initial.category_id) select.value = initial.category_id;
         
-        if (initial.splitOption) {
-            const radio = document.getElementById('split' + initial.splitOption.charAt(0).toUpperCase() + initial.splitOption.slice(1));
-            if (radio) {
-                radio.checked = true;
-                radio.dispatchEvent(new Event('change'));
+        const isEqually = initial.split_option ? (initial.split_option === 'equal') : (initial.split_equally !== false);
+
+        if (!isEqually && initial.users && initial.users.length > 0) {
+            const myId = initial.current_user_id;
+            const me = initial.users.find(u => u.user_id == myId);
+            const others = initial.users.filter(u => u.user_id != myId);
+            
+            if (me && others.length > 0) {
+                const other = others[0];
+                if (parseFloat(me.paid_share) > 0 && parseFloat(other.paid_share) == 0) {
+                    document.getElementById('splitYouPaid').checked = true;
+                    document.getElementById('splitYouPaid').dispatchEvent(new Event('change'));
+                    document.getElementById('theyOwe').value = other.owed_share;
+                } else if (parseFloat(other.paid_share) > 0 && parseFloat(me.paid_share) == 0) {
+                    document.getElementById('splitTheyPaid').checked = true;
+                    document.getElementById('splitTheyPaid').dispatchEvent(new Event('change'));
+                    document.getElementById('youOwe').value = me.owed_share;
+                }
             }
+        } else {
+            document.getElementById('splitEqual').checked = true;
+            document.getElementById('splitEqual').dispatchEvent(new Event('change'));
         }
-        if (initial.theyOwe) document.getElementById('theyOwe').value = initial.theyOwe;
-        if (initial.youOwe) document.getElementById('youOwe').value = initial.youOwe;
-        if (initial.yourPercentage) document.getElementById('yourPercentage').value = initial.yourPercentage;
 
         // Trigger clear button visibility check
         notesEl.dispatchEvent(new Event('input'));

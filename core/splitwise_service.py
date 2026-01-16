@@ -16,11 +16,19 @@ class SplitwiseService:
         self.users = []
         self.access_token = None
         self.current_group_id = config.SPLITWISE_GROUP_ID  # Default group ID from config
+        self._current_user_id = None
+
+    def get_current_user_id(self):
+        """Get the current user ID, cached"""
+        if self._current_user_id is None:
+            self._current_user_id = self.client.getCurrentUser().getId()
+        return self._current_user_id
 
     def set_oauth2_token(self, access_token):
         """Set the OAuth2 token in the Splitwise client"""
         self.access_token = access_token
         self.client.setOAuth2AccessToken(access_token)
+        self._current_user_id = None  # Reset cached user ID
         return True
 
     def set_current_group_id(self, group_id):
@@ -93,6 +101,85 @@ class SplitwiseService:
         sorted_groups = sorted(groups, key=lambda g: len(g.getMembers()))
         return [{'id': g.getId(), 'name': g.getName(), 'members_count': len(g.getMembers()), 'object': g} for g in sorted_groups]
 
+    def get_expenses(self, limit=20):
+        """Get the most recent expenses for the current group"""
+        expenses = self.client.getExpenses(group_id=int(self.current_group_id), limit=limit)
+        return expenses
+
+    def get_representative_examples(self, limit=50):
+        """Get representative examples as ReceiptInfo objects"""
+        expenses = self.get_expenses(limit=limit)
+        
+        raw_data = []
+        for e in expenses:
+            if e.getDeletedAt():
+                continue
+            
+            # Extract basic info
+            category_obj = e.getCategory()
+            category_name = next((c['name'] for c in self.get_categories() if c['id'] == category_obj.getId()), category_obj.getName())
+            
+            # Determine split info
+            split_info = self._get_split_details(e)
+            
+            # Create ReceiptInfo object matching the schema
+            receipt_info = ReceiptInfo(
+                date=ReceiptInfo._coerce_date(e.getDate()),
+                total=e.getCost(),
+                merchant=e.getDescription(),
+                currency_code=e.getCurrencyCode(),
+                notes=e.getDetails(),
+                category=category_name,
+                split_option=split_info["split_option"],
+                users=split_info["users"]
+            )
+            raw_data.append(receipt_info)
+
+        if not raw_data:
+            return []
+
+        # Selection Logic: Prioritize variety
+        seen_merchants = set()
+        seen_categories = set()
+        seen_splits = set()
+        
+        representative = []
+        for ri in raw_data:
+            m, c, s = ri.merchant, ri.category, ri.split_option
+            if m not in seen_merchants or c not in seen_categories or s not in seen_splits:
+                representative.append(ri)
+                seen_merchants.add(m)
+                seen_categories.add(c)
+                seen_splits.add(s)
+            
+            if len(representative) >= 15:
+                break
+                
+        return representative
+
+    def _get_split_details(self, expense: Expense):
+        """Internal helper for example generation"""
+        is_split_equally = True
+        users = expense.getUsers()
+        if not users:
+            return {"split_option": "equal", "users": []}
+
+        equal_split = float(expense.getCost()) / len(users)
+
+        users_shares = []
+        for u in users:
+            paid_share = float(u.getPaidShare())
+            owed_share = float(u.getOwedShare())
+            users_shares.append({
+                "user_id": u.getId(),
+                "paid_share": paid_share,
+                "owed_share": owed_share
+            })
+            if abs(owed_share - equal_split) > 0.01:
+                is_split_equally = False
+
+        return {"split_option": "equal" if is_split_equally else "exact", "users": users_shares}
+
     def create_expense(self, receipt_info: ReceiptInfo, filepath=None):
         """Create an expense in Splitwise"""
         # Create expense object
@@ -110,59 +197,15 @@ class SplitwiseService:
         expense.setCurrencyCode(receipt_info.currency_code)
 
         # Handle split options
-        split_option = receipt_info.splitOption
-        if split_option:
-            if not self.users:
-                self.init_users()
-
-            users = [user_data['object'] for user_data in self.users]
-
-            if split_option == 'equal':
-                # Split equally (default)
-                expense.setSplitEqually(True)
-            else:
-                expense.setSplitEqually(False)
-                if len(users) != 2:
-                    raise ValueError(f'The group {self.current_group_id} contains {len(users)}. Custom splits are currently supported only for 2 users. Please adjust the split in the Splitwise app.')
-
-                current_user_id = self.client.getCurrentUser().getId()
-                current_user = [user for user in users if user.getId() == current_user_id]
-                if not current_user:
-                    raise ValueError(f'Could not find current user {current_user_id} among the members of the group {[user["id"] for user in self.users]}')
-
-                current_user = current_user[0]
-                other_user = [user for user in users if user.getId() != current_user_id][0]
-                expense.addUser(current_user)
-                expense.addUser(other_user)
-
-                if split_option == 'youPaid' and receipt_info.theyOwe is not None:
-                    current_user.setPaidShare(receipt_info.total)
-                    current_user.setOwedShare(float(receipt_info.total) - float(receipt_info.theyOwe))
-                    other_user.setPaidShare(0)
-                    other_user.setOwedShare(receipt_info.theyOwe)
-                elif split_option == 'theyPaid' and receipt_info.youOwe is not None:
-                    current_user.setPaidShare(0)
-                    current_user.setOwedShare(receipt_info.youOwe)
-                    other_user.setPaidShare(receipt_info.total)
-                    other_user.setOwedShare(float(receipt_info.total) - float(receipt_info.youOwe))
-                elif split_option == 'percentage' and receipt_info.yourPercentage is not None:
-                    your_percentage = float(receipt_info.yourPercentage)
-                    total_amount = float(receipt_info.total)
-                    
-                    # Round shares to 2 decimal places to match currency precision
-                    your_share = round((your_percentage / 100) * total_amount, 2)
-                    their_share = round(total_amount - your_share, 2)
-
-                    current_user.setPaidShare(receipt_info.total)
-                    current_user.setOwedShare(your_share)
-                    other_user.setPaidShare(0)
-                    other_user.setOwedShare(their_share)
-                else:
-                    # Default to equal split if split option is not recognized
-                    expense.setSplitEqually(True)
-        else:
-            # Default to equal split if no split option is provided
-            expense.setSplitEqually(True)
+        is_equal = receipt_info.split_option == 'equal'
+        expense.setSplitEqually(is_equal)
+        if not is_equal:
+            for user_data in receipt_info.users:
+                user = ExpenseUser()
+                user.setId(user_data['user_id'])
+                user.setPaidShare(user_data['paid_share'])
+                user.setOwedShare(user_data['owed_share'])
+                expense.addUser(user)
 
         if receipt_info.notes:
             expense.setDetails(receipt_info.notes)
@@ -187,31 +230,13 @@ class SplitwiseService:
                 print(f"Failed to attach receipt: {str(e)}")
 
         # Create a human-readable confirmation message
-        split_info = "Split equally (50/50)"
-        if receipt_info.splitOption:
-            if receipt_info.splitOption == 'youPaid' and receipt_info.theyOwe is not None:
-                split_info = f"You paid, they owe {receipt_info.theyOwe} {receipt_info.currency_code}"
-            elif receipt_info.splitOption == 'theyPaid' and receipt_info.youOwe is not None:
-                split_info = f"They paid, you owe {receipt_info.youOwe} {receipt_info.currency_code}"
-            elif receipt_info.splitOption == 'percentage' and receipt_info.yourPercentage is not None:
-                your_percentage = float(receipt_info.yourPercentage)
-                their_percentage = 100 - your_percentage
-                split_info = f"Split by percentage: You {your_percentage}%, They {their_percentage}%"
-
-        human_readable = f"""
-Receipt Details:
-- Merchant: {receipt_info.merchant}
-- Amount: {receipt_info.total} {receipt_info.currency_code}
-- Date: {receipt_info.date.strftime('%B %d, %Y, %H:%M')}
-- Category: {receipt_info.category or 'Not available'}
-- Notes: {receipt_info.notes or 'Not available'}
-- Split: {split_info}
-"""
+        user_mapping = {u['id']: u['name'] for u in self.get_users()}
+        human_readable = f"Receipt Details:\n{receipt_info.to_summary(user_mapping)}"
 
         return {
             'expense_id': expense_response.getId(),
             'receipt_info': receipt_info.to_dict(),
-            'human_readable_confirmation': human_readable.strip()
+            'human_readable_confirmation': human_readable
         }
 
     def attach_receipt_to_expense(self, expense_id, receipt_path):

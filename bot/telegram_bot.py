@@ -328,6 +328,7 @@ class TelegramBot:
                 logger.info(f"Successfully extracted receipt information: {receipt_info}")
             except Exception as e:
                 logger.error(f"Error extracting receipt information: {str(e)}")
+                logger.exception(e)
                 await update.message.reply_text(str(e))
                 return ConversationHandler.END
 
@@ -340,8 +341,16 @@ class TelegramBot:
                     serializable_info['date'] = receipt_info.date.date().isoformat()
             except Exception:
                 pass
+            
+            # Add group members and current user ID to web app data
             try:
-                info_b64 = base64.urlsafe_b64encode(json.dumps(serializable_info).encode('utf-8')).decode('utf-8')
+                serializable_info['group_members'] = [{'id': u['id'], 'name': u['name']} for u in splitwise_service.get_users()]
+                serializable_info['current_user_id'] = splitwise_service.get_current_user_id()
+            except Exception as e:
+                logger.error(f"Error fetching users for web app: {e}")
+
+            try:
+                info_b64 = base64.urlsafe_b64encode(json.dumps(serializable_info, ensure_ascii=False).encode('utf-8')).decode('utf-8')
             except Exception:
                 info_b64 = ''
             web_app_url = f"{config.WEB_APP_URL}/correct?data={info_b64}"
@@ -353,14 +362,13 @@ class TelegramBot:
             ]]
             correction_reply_markup = ReplyKeyboardMarkup(correction_keyboard, resize_keyboard=True, one_time_keyboard=True)
 
+            # Create summary
+            user_mapping = {u['id']: u['name'] for u in splitwise_service.get_users()}
+            summary = receipt_info.to_summary(user_mapping)
+
             await update.message.reply_text(
                 "I extracted the following information from your receipt:\n\n"
-                f"Merchant: {receipt_info.merchant}\n"
-                f"Amount: {receipt_info.total} {receipt_info.currency_code}\n"
-                f"Date: {receipt_info.date.strftime('%B %d, %Y') if hasattr(receipt_info, 'date') and receipt_info.date else 'Unknown'}\n"
-                f"Category: {receipt_info.category}\n"
-                f"Notes: {receipt_info.notes}\n"
-                f"Split: {receipt_info.splitOption}\n\n"
+                f"{summary}\n\n"
                 "Is this correct?",
                 reply_markup=correction_reply_markup
             )

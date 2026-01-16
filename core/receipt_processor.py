@@ -23,68 +23,64 @@ class ReceiptProcessor:
         """Extract information from receipt using OpenAI's vision model"""
         categories = splitwise_service.get_categories()
         categories_str = ", ".join(cat['name'] for cat in categories)
+        
+        # Get group members
+        users = splitwise_service.get_users()
+        users_list_str = "\n".join([f"- {u['name']} (ID: {u['id']})" for u in users])
+        
+        # Get representative examples from past transactions
+        examples = splitwise_service.get_representative_examples()
+        examples_str = ""
+        if examples:
+            formatted_examples = [ex.to_dict() for ex in examples]
+            examples_str = "\nEXAMPLES OF PAST TRANSACTIONS (use these for consistency):\n"
+            examples_str += json.dumps(formatted_examples, indent=2, ensure_ascii=False) + "\n"
 
         # Determine file type
         mime_type, _ = mimetypes.guess_type(file_path)
         is_pdf = mime_type == 'application/pdf'
 
-        # Prepare content for OpenAI API
-        content_items = []
-
-        # Common prompt for both image and PDF
+        # Common prompt
         initial_prompt = (
-            "Extract the following information from this receipt: "
-            "date, total amount, merchant name, currency code, category, and how the expense should be split between two people in the current Splitwise group. If the merchant is part of a store chain (e.g., Jumbo, Albert Heijn), include only the chain name."
-            "Receipt is relatively recent, today is " + datetime.datetime.now().strftime('%Y-%m-%d') + "."
-            "Return ONLY valid JSON with the following keys: "
-            "'date' (in ISO format with as many details as possible), "
-            "'total' (as a string, using a dot as decimal separator), "
-            "'merchant' (as description), "
-            "'currency_code' (e.g., 'EUR', 'USD'), "
-            "'notes' (if there are any specific notes like invoice number, payment period, the name of a specific store from the chain, etc.; also include the generic description of the expense if this is something different from groceries), "
-            "'category' (one of the following exact category names, choose the most appropriate):\n" +
-            categories_str + "\n\n"
-            "DO NOT INCLUDE any explanation, markdown, or extra text. "
-            "Example: "
-            "{\"date\": \"" + datetime.datetime.now().strftime('%Y-%m-%dT%H:%M') + "\", \"total\": \"12.34\", \"merchant\": \"Store Name\", \"currency_code\": \"EUR\", \"category\": \"Food & Drink / Groceries\", \"splitOption\": \"equal\"}"
+            "Extract information from this receipt and determine the Splitwise expense details.\n\n"
+            "GROUP MEMBERS:\n" + users_list_str + "\n\n"
+            "CONSISTENCY RULES:\n"
+            "1. Merchant Name: Use the chain name (e.g., 'Jumbo', 'Albert Heijn') if applicable.\n"
+            "2. Category: Select from: " + categories_str + "\n"
+            "3. Split Behavior: Follow patterns from examples if provided. Determine who paid and how it should be split among the group members listed above.\n"
+            + examples_str +
+            "\nToday is " + datetime.datetime.now().strftime('%Y-%m-%d') + ".\n"
         )
 
-        content_items.append({
-            "type": "text",
-            "text": initial_prompt
-        })
-
+        content_items = [{"type": "text", "text": initial_prompt}]
         if is_pdf:
-            # Handle PDF file
-            content_item = self._handle_pdf(file_path)
+            content_items.append(self._handle_pdf(file_path))
         else:
-            content_item = self._handle_image(file_path)
-        content_items.append(content_item)
+            content_items.append(self._handle_image(file_path))
+
+        # Define the expected JSON schema for Structured Outputs
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "receipt_info",
+                "strict": True,
+                "schema": ReceiptInfo.get_json_schema()
+            }
+        }
 
         # Call OpenAI API
         response = self.openai_client.chat.completions.create(
-            model="gpt-4o",  # Using gpt-4o as it supports both image and PDF inputs
-            messages=[
-                {
-                    "role": "user",
-                    "content": content_items
-                }
-            ],
-            max_tokens=300
+            model="gpt-4o",
+            messages=[{"role": "user", "content": content_items}],
+            response_format=response_format,
+            max_tokens=500
         )
 
-        json_str = response.choices[0].message.content
-        if json_str.startswith("```json"):
-            json_str = json_str[len("```json"):]
-        if json_str.endswith("```"):
-            json_str = json_str[:-len("```")]
-        result = json.loads(json_str)
-        # Build strictly typed data class
+        result = json.loads(response.choices[0].message.content)
         try:
-            # Normalize date via dataclass constructor
             return ReceiptInfo.from_dict(result)
         except Exception as e:
-            raise ValueError(f"Failed to parse receipt info JSON into ReceiptInfo: {e}")
+            raise ValueError(f"Failed to parse receipt info: {e}")
 
     def _handle_image(self, file_path):
         """Process image files (including HEIC/HEIF)"""

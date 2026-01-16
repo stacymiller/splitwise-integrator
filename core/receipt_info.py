@@ -13,17 +13,81 @@ class ReceiptInfo:
     # optional/extra fields collected from OCR or user corrections
     notes: Optional[str] = None
     category: Optional[str] = None
-    splitOption: Optional[str] = None  # 'equal' | 'youPaid' | 'theyPaid' | 'percentage'
-    theyOwe: Optional[float] = None
-    youOwe: Optional[float] = None
-    yourPercentage: Optional[float] = None
+    split_option: str = "equal"
+    users: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
         # ensure date serializable
         if isinstance(self.date, datetime):
             d['date'] = self.date.isoformat()
+        # ensure notes and category are strings for schema consistency
+        d['notes'] = self.notes or ""
+        d['category'] = self.category or ""
         return d
+
+    def to_summary(self, user_mapping: Optional[Dict[int, str]] = None) -> str:
+        """Returns a human-readable summary of the receipt information."""
+        if self.split_option == 'equal':
+            split_summary = "Split equally"
+        else:
+            shares = []
+            for u in self.users:
+                try:
+                    owed = float(u.get('owed_share', 0))
+                except (ValueError, TypeError):
+                    owed = 0
+                
+                if owed > 0:
+                    user_id = u.get('user_id')
+                    name = user_mapping.get(user_id) if user_mapping and user_id is not None else None
+                    user_label = name if name else f"ID {user_id}"
+                    shares.append(f"{user_label} owes {owed}")
+            split_summary = "Custom split: " + ", ".join(shares) if shares else "Custom split"
+
+        date_str = self.date.strftime('%B %d, %Y')
+        if self.date.hour != 0 or self.date.minute != 0:
+            date_str = self.date.strftime('%B %d, %Y, %H:%M')
+
+        lines = [
+            f"Merchant: {self.merchant}",
+            f"Amount: {self.total} {self.currency_code}",
+            f"Date: {date_str}",
+            f"Category: {self.category or 'Not available'}",
+            f"Notes: {self.notes or 'None'}",
+            f"Split: {split_summary}"
+        ]
+        return "\n".join(f"- {line}" for line in lines)
+
+    @staticmethod
+    def get_json_schema() -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "date": {"type": "string", "description": "ISO format date"},
+                "total": {"type": "string", "description": "Total amount as string"},
+                "merchant": {"type": "string"},
+                "currency_code": {"type": "string", "description": "3-letter currency code"},
+                "notes": {"type": "string", "description": "Specific details or description"},
+                "category": {"type": "string"},
+                "split_option": {"type": "string", "enum": ["equal", "exact"]},
+                "users": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "user_id": {"type": "integer"},
+                            "paid_share": {"type": "string", "description": "Amount this user paid"},
+                            "owed_share": {"type": "string", "description": "Amount this user owes"}
+                        },
+                        "required": ["user_id", "paid_share", "owed_share"],
+                        "additionalProperties": False
+                    }
+                }
+            },
+            "required": ["date", "total", "merchant", "currency_code", "notes", "category", "split_option", "users"],
+            "additionalProperties": False
+        }
 
     @staticmethod
     def _coerce_date(value: Any) -> datetime:
@@ -59,22 +123,14 @@ class ReceiptInfo:
         merchant = data.get('merchant') or 'Unknown'
         notes = data.get('notes')
         category = data.get('category')
-        splitOption = data.get('splitOption') or data.get('split_option')
+        
+        # Determine split_option
+        split_option = data.get('split_option')
+        if not split_option:
+            # Fallback for legacy split_equally field
+            split_option = 'equal' if data.get('split_equally', True) else 'exact'
 
-        def _to_float(v):
-            if v is None:
-                return None
-            try:
-                return float(v)
-            except Exception:
-                try:
-                    return float(str(v).replace(',', '.'))
-                except Exception:
-                    return None
-
-        theyOwe = _to_float(data.get('theyOwe'))
-        youOwe = _to_float(data.get('youOwe'))
-        yourPercentage = _to_float(data.get('yourPercentage'))
+        users = data.get('users', [])
 
         return cls(
             date=date,
@@ -83,10 +139,8 @@ class ReceiptInfo:
             currency_code=currency_code,
             notes=notes,
             category=category,
-            splitOption=splitOption,
-            theyOwe=theyOwe,
-            youOwe=youOwe,
-            yourPercentage=yourPercentage,
+            split_option=split_option,
+            users=users
         )
 
     def update_from_dict(self, data: Dict[str, Any]) -> None:
@@ -97,7 +151,5 @@ class ReceiptInfo:
         self.currency_code = updated.currency_code
         self.notes = updated.notes
         self.category = updated.category
-        self.splitOption = updated.splitOption
-        self.theyOwe = updated.theyOwe
-        self.youOwe = updated.youOwe
-        self.yourPercentage = updated.yourPercentage
+        self.split_option = updated.split_option
+        self.users = updated.users
