@@ -149,17 +149,8 @@ class TelegramBot:
         logger.info("Starting `select_group` group selection conversation")
         user_id = update.effective_user.id
 
-        # Check if the user is authenticated
-        if not self.is_authenticated(user_id, context):
-            await update.message.reply_text(
-                "You need to login to Splitwise first. Please use the /login command."
-            )
+        if not await self._ensure_authenticated(update, context):
             return ConversationHandler.END
-
-        # Set the access token in the Splitwise service
-        access_token = self.get_access_token(user_id, context)
-        if access_token:
-            splitwise_service.set_oauth2_token(access_token)
 
         # Get the list of groups
         groups = splitwise_service.get_groups()
@@ -192,11 +183,7 @@ class TelegramBot:
         logger.info(f"Received group selection: {update.message.text}")
         user_id = update.effective_user.id
 
-        # Check if the user is authenticated
-        if not self.is_authenticated(user_id, context):
-            await update.message.reply_text(
-                "You need to login to Splitwise first. Please use the /login command."
-            )
+        if not await self._ensure_authenticated(update, context):
             return ConversationHandler.END
 
         # Get the selected group number
@@ -281,21 +268,29 @@ class TelegramBot:
                     logger.error(f"Error cleaning up temporary file: {str(cleanup_error)}")
             raise ValueError("An error occurred while processing your file. Please try again with a different file.")
 
+    async def _cleanup_receipt_data(self, context: ContextTypes.DEFAULT_TYPE):
+        """Cleanup persisted receipt file & related context."""
+        receipt_file_path = context.user_data.get('receipt_file_path')
+        if receipt_file_path:
+            try:
+                if os.path.exists(receipt_file_path):
+                    os.unlink(receipt_file_path)
+                    logger.info(f"Deleted persisted receipt file: {receipt_file_path}")
+            except Exception as e:
+                logger.error(f"Failed to delete persisted receipt file {receipt_file_path}: {e}")
+            finally:
+                context.user_data.pop('receipt_file_path', None)
+        
+        # Clear receipt_info as well at the end of the flow
+        context.user_data.pop('receipt_info', None)
+
     async def process_receipt(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Process a receipt photo or document (including PDF and various image formats)."""
         try:
             user_id = update.effective_user.id
             logger.info(f"Processing receipt for user {user_id}")
 
-            # Check if the user is authenticated
-            if self.is_authenticated(user_id, context):
-                access_token = self.get_access_token(user_id, context)
-                splitwise_service.set_oauth2_token(access_token)
-            else:
-                logger.info(f"User {user_id} is not authenticated")
-                await update.message.reply_text(
-                    "You need to login to Splitwise first. Please use the /login command."
-                )
+            if not await self._ensure_authenticated(update, context):
                 return ConversationHandler.END
 
             # Check if the user has selected a group
@@ -352,7 +347,8 @@ class TelegramBot:
             # Reply keyboard with Yes (text) and WebApp button for corrections
             correction_keyboard = [[
                 KeyboardButton(text="Yes"),
-                KeyboardButton(text="Let me correct", web_app=WebAppInfo(url=web_app_url))
+                KeyboardButton(text="Let me correct", web_app=WebAppInfo(url=web_app_url)),
+                KeyboardButton(text="Cancel")
             ]]
             correction_reply_markup = ReplyKeyboardMarkup(correction_keyboard, resize_keyboard=True, one_time_keyboard=True)
 
@@ -370,50 +366,77 @@ class TelegramBot:
             return CONFIRM
         except Exception as e:
             logger.error(f"Error processing receipt: {e}")
-            if 'receipt_file_path' in context.user_data and os.path.exists(context.user_data['receipt_file_path']):
-                try:
-                    os.remove(context.user_data['receipt_file_path'])
-                    logger.info(f"Deleted persisted receipt file: {context.user_data['receipt_file_path']}")
-                except Exception as cleanup_error:
-                    logger.error(f"Error cleaning up persisted receipt file: {str(cleanup_error)}")
+            await self._cleanup_receipt_data(context)
             await update.message.reply_text(
                 "An error occurred while processing your receipt. Please try again."
             )
             return ConversationHandler.END
 
-    async def confirm_receipt(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Confirm the extracted receipt information."""
+    async def _ensure_authenticated(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        """Ensure user is authenticated and token is set in the service."""
         user_id = update.effective_user.id
-        # Target message for replies regardless of callback or message
         msg_target = update.callback_query.message if getattr(update, 'callback_query', None) else update.message
-
-        # Helper to cleanup persisted receipt file & related context
-        def _cleanup_persisted():
-            receipt_file_path = context.user_data.get('receipt_file_path')
-            if receipt_file_path:
-                try:
-                    import os
-                    if os.path.exists(receipt_file_path):
-                        os.unlink(receipt_file_path)
-                        logger.info(f"Deleted persisted receipt file: {receipt_file_path}")
-                except Exception as e:
-                    logger.error(f"Failed to delete persisted receipt file {receipt_file_path}: {e}")
-                finally:
-                    context.user_data.pop('receipt_file_path', None)
-            # Clear receipt_info as well at the end of the flow
-            context.user_data.pop('receipt_info', None)
-
-        # Check if the user is authenticated
+        
         if not self.is_authenticated(user_id, context):
             await msg_target.reply_text(
-                "You need to login to Splitwise first. Please use the /login command."
+                "You need to login to Splitwise first. Please use the /login command.",
+                reply_markup=ReplyKeyboardRemove()
             )
-            return ConversationHandler.END
-
-        # Set the access token in the Splitwise service
+            return False
+            
         access_token = self.get_access_token(user_id, context)
         if access_token:
             splitwise_service.set_oauth2_token(access_token)
+        return True
+
+    async def _finalize_expense(self, update: Update, context: ContextTypes.DEFAULT_TYPE, receipt_info: ReceiptInfo) -> int:
+        """Create expense, attach receipt, and notify user."""
+        msg_target = update.callback_query.message if getattr(update, 'callback_query', None) else update.message
+        
+        try:
+            result = splitwise_service.create_expense(receipt_info)
+        except Exception as e:
+            logger.error(f"Error creating expense: {e}")
+            await msg_target.reply_text(f"Error creating expense: {e}", reply_markup=ReplyKeyboardRemove())
+            await self._cleanup_receipt_data(context)
+            return ConversationHandler.END
+
+        if not result or 'human_readable_confirmation' not in result:
+            await msg_target.reply_text(
+                "An error occurred while creating the expense. Please try again.",
+                reply_markup=ReplyKeyboardRemove()
+            )
+            await self._cleanup_receipt_data(context)
+            return ConversationHandler.END
+
+        # Try to attach the receipt file to Splitwise expense if we have it
+        receipt_file_path = context.user_data.get('receipt_file_path')
+        attachment_note = ""
+        if receipt_file_path:
+            try:
+                splitwise_service.attach_receipt_to_expense(result['expense_id'], receipt_file_path)
+                attachment_note = "\nReceipt image/PDF has been attached to the expense."
+            except Exception as attach_err:
+                logger.error(f"Failed to attach receipt for expense {result['expense_id']}: {attach_err}")
+                attachment_note = f"\nNote: failed to attach receipt: {attach_err}"
+        else:
+            attachment_note = "\nNote: No receipt file was found to attach."
+
+        await msg_target.reply_text(
+            "Expense added to Splitwise successfully!\n\n"
+            f"{result['human_readable_confirmation']}"
+            f"{attachment_note}",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        await self._cleanup_receipt_data(context)
+        return ConversationHandler.END
+
+    async def confirm_receipt(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Confirm the extracted receipt information."""
+        msg_target = update.callback_query.message if getattr(update, 'callback_query', None) else update.message
+
+        if not await self._ensure_authenticated(update, context):
+            return ConversationHandler.END
 
         # Handle simple text confirmation from reply keyboard
         text = (update.message.text or '').strip().lower() if update.message else ''
@@ -424,71 +447,27 @@ class TelegramBot:
                     "Sorry, I couldn't find your receipt information. Please try again.",
                     reply_markup=ReplyKeyboardRemove()
                 )
-                _cleanup_persisted()
+                await self._cleanup_receipt_data(context)
                 return ConversationHandler.END
 
-            receipt_info = context.user_data['receipt_info']
-
-            try:
-                result = splitwise_service.create_expense(receipt_info)
-            except Exception as e:
-                logger.error(f"Error uploading expense: {str(e)}")
-                await msg_target.reply_text(f"Error uploading expense: {str(e)}", reply_markup=ReplyKeyboardRemove())
-                _cleanup_persisted()
-                return ConversationHandler.END
-
-            if not result or 'human_readable_confirmation' not in result:
-                await msg_target.reply_text(
-                    "An error occurred while creating the expense. Please try again.",
-                    reply_markup=ReplyKeyboardRemove()
-                )
-                _cleanup_persisted()
-                return ConversationHandler.END
-
-            # Try to attach the receipt file to Splitwise expense if we have it
-            receipt_file_path = context.user_data.get('receipt_file_path')
-            if receipt_file_path:
-                try:
-                    splitwise_service.attach_receipt_to_expense(result['expense_id'], receipt_file_path)
-                    attachment_note = "\nReceipt image/PDF has been attached to the expense."
-                except Exception as attach_err:
-                    logger.error(f"Failed to attach receipt for expense {result['expense_id']}: {attach_err}")
-                    attachment_note = f"\nNote: failed to attach receipt: {attach_err}"
-            else:
-                attachment_note = "\nNote: No receipt file was found to attach."
-
-            await msg_target.reply_text(
-                "Expense added to Splitwise successfully!\n\n"
-                f"{result['human_readable_confirmation']}"
-                f"{attachment_note}",
-                reply_markup=ReplyKeyboardRemove()
-            )
-            _cleanup_persisted()
-            return ConversationHandler.END
+            return await self._finalize_expense(update, context, context.user_data['receipt_info'])
         else:
             await msg_target.reply_text(
                 "No worries. You can tap 'Let me correct' to adjust details, or send the receipt again.",
                 reply_markup=ReplyKeyboardRemove()
             )
-            _cleanup_persisted()
+            await self._cleanup_receipt_data(context)
             return ConversationHandler.END
 
     async def handle_web_app_data(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Handle data returned by the Telegram Web App (mini app)."""
         logger.info("Received data from the web app")
-        user_id = update.effective_user.id
         message = update.message
         if not message or not getattr(message, 'web_app_data', None):
             return ConversationHandler.END
 
-        # Ensure authentication
-        if not self.is_authenticated(user_id, context):
-            await message.reply_text("You need to login to Splitwise first. Please use the /login command.", reply_markup=ReplyKeyboardRemove())
+        if not await self._ensure_authenticated(update, context):
             return ConversationHandler.END
-
-        access_token = self.get_access_token(user_id, context)
-        if access_token:
-            splitwise_service.set_oauth2_token(access_token)
 
         # Parse incoming JSON
         try:
@@ -499,81 +478,25 @@ class TelegramBot:
 
         # Merge/replace receipt_info using the strict ReceiptInfo dataclass
         current: ReceiptInfo = context.user_data.get('receipt_info')
-        current.update_from_dict(incoming)
-        context.user_data['receipt_info'] = current
-
-        # Create the expense
-        try:
-            result = splitwise_service.create_expense(current)
-        except Exception as e:
-            logging.error(f"Error uploading expense after correction: {e}")
-            await message.reply_text(f"Error uploading expense: {e}", reply_markup=ReplyKeyboardRemove())
-            # Cleanup persisted data and file
-            receipt_file_path = context.user_data.get('receipt_file_path')
-            if receipt_file_path and os.path.exists(receipt_file_path):
-                try:
-                    os.unlink(receipt_file_path)
-                except Exception:
-                    pass
-            context.user_data.pop('receipt_file_path', None)
-            context.user_data.pop('receipt_info', None)
-            return ConversationHandler.END
-
-        if not result or 'human_readable_confirmation' not in result:
-            await message.reply_text("An error occurred while creating the expense. Please try again.", reply_markup=ReplyKeyboardRemove())
-            # Cleanup
-            receipt_file_path = context.user_data.get('receipt_file_path')
-            if receipt_file_path and os.path.exists(receipt_file_path):
-                try:
-                    os.unlink(receipt_file_path)
-                except Exception:
-                    pass
-            context.user_data.pop('receipt_file_path', None)
-            context.user_data.pop('receipt_info', None)
-            return ConversationHandler.END
-
-        # Try to attach the receipt file to Splitwise expense if we have it
-        receipt_file_path = context.user_data.get('receipt_file_path')
-        if receipt_file_path:
+        if not current:
+            # Fallback if receipt_info somehow lost but we have web app data
             try:
-                splitwise_service.attach_receipt_to_expense(result['expense_id'], receipt_file_path)
-                attachment_note = "\nReceipt image/PDF has been attached to the expense."
-            except Exception as attach_err:
-                logging.error(f"Failed to attach receipt for expense {result['expense_id']}: {attach_err}")
-                attachment_note = f"\nNote: failed to attach receipt: {attach_err}"
-        else:
-            attachment_note = "\nNote: No receipt file was found to attach."
-
-        await message.reply_text(
-            "Expense added to Splitwise successfully!\n\n"
-            f"{result['human_readable_confirmation']}"
-            f"{attachment_note}",
-            reply_markup=ReplyKeyboardRemove()
-        )
-
-        # Cleanup context
-        if receipt_file_path and os.path.exists(receipt_file_path):
-            try:
-                os.unlink(receipt_file_path)
+                current = ReceiptInfo.from_dict(incoming)
             except Exception:
-                pass
-        context.user_data.pop('receipt_file_path', None)
-        context.user_data.pop('receipt_info', None)
-
-        return ConversationHandler.END
+                await message.reply_text("Session lost. Please send the receipt again.", reply_markup=ReplyKeyboardRemove())
+                return ConversationHandler.END
+        else:
+            current.update_from_dict(incoming)
+            
+        context.user_data['receipt_info'] = current
+        return await self._finalize_expense(update, context, current)
 
 
     async def change_group(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Change the selected Splitwise group."""
         logger.info("Starting `change_group` group selection conversation")
-        user_id = update.effective_user.id
 
-        # Check if the user is authenticated
-        if not self.is_authenticated(user_id, context):
-            logger.info(f"User {user_id} is not authenticated")
-            await update.message.reply_text(
-                "You need to login to Splitwise first. Please use the /login command."
-            )
+        if not await self._ensure_authenticated(update, context):
             return ConversationHandler.END
 
         # Start the group selection conversation
@@ -607,7 +530,11 @@ class TelegramBot:
 
     async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Cancel the current operation."""
-        await update.message.reply_text("Operation cancelled.")
+        await self._cleanup_receipt_data(context)
+        await update.message.reply_text(
+            "Operation cancelled.",
+            reply_markup=ReplyKeyboardRemove()
+        )
         return ConversationHandler.END
 
     @classmethod
@@ -677,6 +604,14 @@ class TelegramBot:
         else:
             logger.info("No pending authentications found")
 
+    async def _catch_all_confirm(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Catch-all handler for the CONFIRM state."""
+        await update.message.reply_text(
+            "Please confirm with 'Yes', use 'Let me correct' to adjust details, or tap 'Cancel' to exit.",
+            reply_markup=update.message.reply_markup
+        )
+        return CONFIRM
+
     def run(self):
         """Run the bot."""
         if not self.token:
@@ -697,7 +632,10 @@ class TelegramBot:
             states={
                 CONFIRM: [
                     MessageHandler((filters.TEXT & ~filters.COMMAND) & filters.Regex("(?i)^yes$"), self.confirm_receipt),
-                    MessageHandler(filters.StatusUpdate.WEB_APP_DATA, self.handle_web_app_data)
+                    MessageHandler((filters.TEXT & ~filters.COMMAND) & filters.Regex("(?i)^cancel$"), self.cancel),
+                    MessageHandler(filters.StatusUpdate.WEB_APP_DATA, self.handle_web_app_data),
+                    # Catch-all for the CONFIRM state
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self._catch_all_confirm)
                 ]
             },
             fallbacks=[CommandHandler("cancel", self.cancel)],
