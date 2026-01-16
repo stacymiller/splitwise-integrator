@@ -335,12 +335,6 @@ class TelegramBot:
             # Ask the user to confirm the extracted information and offer a correction mini app
             # Prepare a serializable copy of receipt_info for the web app
             serializable_info = receipt_info.to_dict()
-            try:
-                # Reduce date to date-only string for compactness
-                if isinstance(receipt_info.date, datetime.datetime):
-                    serializable_info['date'] = receipt_info.date.date().isoformat()
-            except Exception:
-                pass
             
             # Add group members and current user ID to web app data
             try:

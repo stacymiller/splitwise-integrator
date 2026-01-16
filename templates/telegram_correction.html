@@ -200,7 +200,7 @@
 
     <div class="mb-3">
         <label for="date" class="form-label">Date</label>
-        <input id="date" class="form-control" type="date"/>
+        <input id="date" class="form-control" type="datetime-local"/>
     </div>
 
     <div class="mb-3">
@@ -280,7 +280,7 @@
             currency_code: document.getElementById('currency_code').value?.trim().toUpperCase() || 'EUR',
             date: document.getElementById('date').value || null,
             notes: document.getElementById('notes').value?.trim() || null,
-            category: cat.options[cat.selectedIndex]?.textContent || null,
+            category: cat.selectedIndex > 0 ? cat.options[cat.selectedIndex].textContent : null,
             category_id: cat.value || null,
             split_option: splitOption === 'equal' ? 'equal' : 'exact',
             users: [],
@@ -371,11 +371,25 @@
         currencyInput.value = (initial.currency_code || initial.currency || 'EUR').toUpperCase();
         updateCur();
         
-        document.getElementById('date').value = initial.date ? new Date(initial.date).toISOString().substring(0, 10) : '';
+        if (initial.date) {
+            // We need YYYY-MM-DDTHH:MM for datetime-local input
+            document.getElementById('date').value = initial.date.substring(0, 16);
+        }
+        
         const notesEl = document.getElementById('notes');
         notesEl.value = initial.notes || '';
         
-        if (initial.category_id) select.value = initial.category_id;
+        if (initial.category_id) {
+            select.value = initial.category_id;
+        } else if (initial.category) {
+            // Try to match category by name
+            for (let i = 0; i < select.options.length; i++) {
+                if (select.options[i].textContent === initial.category) {
+                    select.selectedIndex = i;
+                    break;
+                }
+            }
+        }
         
         const isEqually = initial.split_option ? (initial.split_option === 'equal') : (initial.split_equally !== false);
 
