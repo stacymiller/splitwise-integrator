@@ -6,8 +6,8 @@ import mimetypes
 import os
 
 import requests
-from telegram import Update, ReplyKeyboardRemove, WebAppInfo, KeyboardButton, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from telegram import Update, ReplyKeyboardRemove, WebAppInfo, KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 
 import config
 from core.receipt_processor import receipt_processor
@@ -22,7 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Define conversation states
-SELECT_GROUP, CONFIRM = range(2)
+SELECT_GROUP, CONFIRM, DUPLICATE_CHECK = range(3)
 
 class TelegramBot:
     # Class variable to store the application instance
@@ -389,10 +389,39 @@ class TelegramBot:
             splitwise_service.set_oauth2_token(access_token)
         return True
 
-    async def _finalize_expense(self, update: Update, context: ContextTypes.DEFAULT_TYPE, receipt_info: ReceiptInfo) -> int:
+    async def _finalize_expense(self, update: Update, context: ContextTypes.DEFAULT_TYPE, receipt_info: ReceiptInfo, force: bool = False) -> int:
         """Create expense, attach receipt, and notify user."""
         msg_target = update.callback_query.message if getattr(update, 'callback_query', None) else update.message
         
+        # Check for potential duplicates unless force-proceeding
+        if not force:
+            duplicates = splitwise_service.find_potential_duplicates(receipt_info)
+            if duplicates:
+                dup_list = []
+                for d in duplicates:
+                    # Format: Merchant: Amount Currency on Date (Category)
+                    date_str = d.date.strftime('%Y-%m-%d')
+                    dup_list.append(f"• *{d.merchant}*: {d.total} {d.currency_code} on {date_str} ({d.category})")
+                
+                dup_text = "\n".join(dup_list)
+                warning_text = (
+                    "⚠️ *Potential Duplicate Alert*\n\n"
+                    "It seems you already have similar transactions logged:\n\n"
+                    f"{dup_text}\n\n"
+                    "Do you want to *proceed* anyway or *cancel* this operation?"
+                )
+                
+                keyboard = [
+                    [
+                        InlineKeyboardButton("Proceed", callback_data="duplicate_proceed"),
+                        InlineKeyboardButton("Cancel", callback_data="duplicate_cancel")
+                    ]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await msg_target.reply_text(warning_text, reply_markup=reply_markup, parse_mode='Markdown')
+                return DUPLICATE_CHECK
+
         try:
             result = splitwise_service.create_expense(receipt_info)
         except Exception as e:
@@ -430,6 +459,28 @@ class TelegramBot:
         )
         await self._cleanup_receipt_data(context)
         return ConversationHandler.END
+
+    async def handle_duplicate_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Handle callback queries from the duplicate check alert."""
+        query = update.callback_query
+        await query.answer()
+        
+        if query.data == "duplicate_proceed":
+            # Remove the buttons from the previous message
+            await query.edit_message_reply_markup(reply_markup=None)
+            
+            receipt_info = context.user_data.get('receipt_info')
+            if not receipt_info:
+                await query.message.reply_text("Session lost. Please send the receipt again.")
+                await self._cleanup_receipt_data(context)
+                return ConversationHandler.END
+                
+            return await self._finalize_expense(update, context, receipt_info, force=True)
+        else:
+            # User chose to cancel
+            await query.edit_message_text("Operation cancelled. The expense was NOT created.")
+            await self._cleanup_receipt_data(context)
+            return ConversationHandler.END
 
     async def confirm_receipt(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Confirm the extracted receipt information."""
@@ -636,6 +687,9 @@ class TelegramBot:
                     MessageHandler(filters.StatusUpdate.WEB_APP_DATA, self.handle_web_app_data),
                     # Catch-all for the CONFIRM state
                     MessageHandler(filters.TEXT & ~filters.COMMAND, self._catch_all_confirm)
+                ],
+                DUPLICATE_CHECK: [
+                    CallbackQueryHandler(self.handle_duplicate_callback, pattern="^duplicate_")
                 ]
             },
             fallbacks=[CommandHandler("cancel", self.cancel)],

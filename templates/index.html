@@ -270,16 +270,40 @@
             if (data.splitOption === 'theyPaid') data.youOwe = $('youOwe').value;
             if (data.splitOption === 'percentage') data.yourPercentage = $('yourPercentage').value;
 
-            try {
-                $('editReceiptForm').style.display = 'none';
-                setStatus('<div class="spinner"></div>Creating expense...', 'processing');
-                const res = await (await fetch('/create_expense', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ receipt_info: data, filepath: $('filepath').value })
-                })).json();
-                setStatus(`Success! ID: ${res.expense_id}<br><br>${res.human_readable_confirmation.replace(/\n/g, '<br>')}`, 'success');
-                $('uploadForm').reset(); pastedImageFile = null; $('previewContainer').style.display = 'none';
-            } catch (err) { setStatus(err.message, 'error'); }
+            const submitExpense = async (force = false) => {
+                try {
+                    $('editReceiptForm').style.display = 'none';
+                    setStatus('<div class="spinner"></div>Creating expense...', 'processing');
+                    const res = await (await fetch('/create_expense', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ receipt_info: data, filepath: $('filepath').value, force: force })
+                    })).json();
+
+                    if (res.warning === 'potential_duplicates') {
+                        const dupList = res.duplicates.map(d => `- ${d.merchant}: ${d.total} ${d.currency_code} on ${d.date.substring(0, 10)}`).join('\n');
+                        if (confirm(`Potential duplicates found:\n${dupList}\n\nDo you want to proceed?`)) {
+                            return await submitExpense(true);
+                        } else {
+                            setStatus('Cancelled by user', 'error');
+                            $('editReceiptForm').style.display = 'block';
+                            return;
+                        }
+                    }
+
+                    if (res.success) {
+                        setStatus(`Success! ID: ${res.expense_id}<br><br>${res.human_readable_confirmation.replace(/\n/g, '<br>')}`, 'success');
+                        $('uploadForm').reset(); pastedImageFile = null; $('previewContainer').style.display = 'none';
+                    } else {
+                        setStatus(res.error || 'Failed to create expense', 'error');
+                        $('editReceiptForm').style.display = 'block';
+                    }
+                } catch (err) { 
+                    setStatus(err.message, 'error');
+                    $('editReceiptForm').style.display = 'block';
+                }
+            };
+
+            await submitExpense();
         };
 
         init();

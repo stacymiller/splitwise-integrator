@@ -1,4 +1,5 @@
 import splitwise
+from dateutil.relativedelta import relativedelta
 from splitwise.expense import Expense
 from splitwise.user import ExpenseUser
 import requests
@@ -101,10 +102,76 @@ class SplitwiseService:
         sorted_groups = sorted(groups, key=lambda g: len(g.getMembers()))
         return [{'id': g.getId(), 'name': g.getName(), 'members_count': len(g.getMembers()), 'object': g} for g in sorted_groups]
 
-    def get_expenses(self, limit=20):
-        """Get the most recent expenses for the current group"""
-        expenses = self.client.getExpenses(group_id=int(self.current_group_id), limit=limit)
+    def get_expenses(self, **kwargs):
+        """Get the most recent expenses for the current group; all kwargs are passed to the library call"""
+        group_id = kwargs.pop('group_id', int(self.current_group_id))
+        expenses = self.client.getExpenses(group_id=group_id, **kwargs)
         return expenses
+
+    def find_potential_duplicates(self, receipt_info: ReceiptInfo, limit=40):
+        """Find potential duplicate expenses in the current group based on criteria:
+        - same day, total amount within +-15%
+        - +- 2 days from the same merchant or category, total amount within +-5%
+        """
+        since = receipt_info.date - relativedelta(days=2)
+        until = receipt_info.date + relativedelta(days=2)
+        try:
+            expenses = self.get_expenses(dated_after=since.isoformat(), dated_before=until.isoformat(), limit=1000)
+        except Exception as e:
+            import logging
+            logging.error(f"Error fetching expenses for duplicate check: {e}")
+            return []
+            
+        duplicates = []
+        
+        target_date = receipt_info.date
+        try:
+            target_amount = float(receipt_info.total)
+        except (ValueError, TypeError):
+            target_amount = 0.0
+            
+        target_merchant = (receipt_info.merchant or "").lower()
+        target_category = (receipt_info.category or "").lower()
+
+        for e in expenses:
+            if e.getDeletedAt():
+                continue
+            
+            # Use unified converter to get ReceiptInfo for comparison
+            e_ri = ReceiptInfo.from_expense(e, self.get_categories())
+            
+            try:
+                e_amount = float(e_ri.total)
+            except (ValueError, TypeError):
+                continue
+                
+            e_description = (e_ri.merchant or "").lower()
+            e_category = (e_ri.category or "").lower()
+
+            # Date difference in days
+            date_diff = abs((target_date.date() - e_ri.date.date()).days)
+
+            is_duplicate = False
+            
+            # Criteria 1: same day, total amount within +-15%
+            if date_diff == 0:
+                if target_amount > 0 and abs(target_amount - e_amount) <= 0.15 * target_amount:
+                    is_duplicate = True
+
+            # Criteria 2: +- 2 days from the same merchant or category, total amount within +-5%
+            if not is_duplicate and date_diff <= 2:
+                # Check merchant similarity (one contains another)
+                same_merchant = target_merchant and (target_merchant in e_description or e_description in target_merchant)
+                same_category = target_category and target_category == e_category
+                
+                if (same_merchant or same_category):
+                    if target_amount > 0 and abs(target_amount - e_amount) <= 0.05 * target_amount:
+                        is_duplicate = True
+            
+            if is_duplicate:
+                duplicates.append(e_ri)
+        
+        return duplicates
 
     def get_representative_examples(self, limit=50):
         """Get representative examples as ReceiptInfo objects"""
@@ -115,24 +182,8 @@ class SplitwiseService:
             if e.getDeletedAt():
                 continue
             
-            # Extract basic info
-            category_obj = e.getCategory()
-            category_name = next((c['name'] for c in self.get_categories() if c['id'] == category_obj.getId()), category_obj.getName())
-            
-            # Determine split info
-            split_info = self._get_split_details(e)
-            
-            # Create ReceiptInfo object matching the schema
-            receipt_info = ReceiptInfo(
-                date=ReceiptInfo._coerce_date(e.getDate()),
-                total=e.getCost(),
-                merchant=e.getDescription(),
-                currency_code=e.getCurrencyCode(),
-                notes=e.getDetails(),
-                category=category_name,
-                split_option=split_info["split_option"],
-                users=split_info["users"]
-            )
+            # Create ReceiptInfo object using the unified converter
+            receipt_info = ReceiptInfo.from_expense(e, self.get_categories())
             raw_data.append(receipt_info)
 
         if not raw_data:
@@ -156,29 +207,6 @@ class SplitwiseService:
                 break
                 
         return representative
-
-    def _get_split_details(self, expense: Expense):
-        """Internal helper for example generation"""
-        is_split_equally = True
-        users = expense.getUsers()
-        if not users:
-            return {"split_option": "equal", "users": []}
-
-        equal_split = float(expense.getCost()) / len(users)
-
-        users_shares = []
-        for u in users:
-            paid_share = float(u.getPaidShare())
-            owed_share = float(u.getOwedShare())
-            users_shares.append({
-                "user_id": u.getId(),
-                "paid_share": paid_share,
-                "owed_share": owed_share
-            })
-            if abs(owed_share - equal_split) > 0.01:
-                is_split_equally = False
-
-        return {"split_option": "equal" if is_split_equally else "exact", "users": users_shares}
 
     def create_expense(self, receipt_info: ReceiptInfo, filepath=None):
         """Create an expense in Splitwise"""

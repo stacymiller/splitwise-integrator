@@ -311,6 +311,7 @@ def create_expense():
     data = request.json
     receipt_info_data = data.get('receipt_info')
     filepath = data.get('filepath')
+    force = data.get('force', False)
 
     if not receipt_info_data or not filepath:
         return jsonify({'error': 'Missing receipt information or filepath'}), 400
@@ -318,6 +319,18 @@ def create_expense():
     try:
         # Convert incoming dict to ReceiptInfo
         receipt_info = ReceiptInfo.from_dict(receipt_info_data)
+
+        # Check for potential duplicates unless force-proceeding
+        if not force:
+            duplicates = splitwise_service.find_potential_duplicates(receipt_info)
+            if duplicates:
+                return jsonify({
+                    'success': False,
+                    'warning': 'potential_duplicates',
+                    'duplicates': [d.to_dict() for d in duplicates],
+                    'message': 'Similar transactions already logged'
+                })
+
         # Create the expense using the Splitwise service
         result = splitwise_service.create_expense(receipt_info, filepath)
 

@@ -1,7 +1,10 @@
 from __future__ import annotations
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from splitwise.expense import Expense
 
 
 @dataclass
@@ -15,6 +18,7 @@ class ReceiptInfo:
     category: Optional[str] = None
     split_option: str = "equal"
     users: list[dict[str, Any]] = field(default_factory=list)
+    id: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -131,6 +135,7 @@ class ReceiptInfo:
             split_option = 'equal' if data.get('split_equally', True) else 'exact'
 
         users = data.get('users', [])
+        id_val = data.get('id')
 
         return cls(
             date=date,
@@ -140,7 +145,55 @@ class ReceiptInfo:
             notes=notes,
             category=category,
             split_option=split_option,
-            users=users
+            users=users,
+            id=int(id_val) if id_val is not None else None
+        )
+
+    @classmethod
+    def from_expense(cls, e: Expense, categories: Optional[List[Dict[str, Any]]] = None) -> ReceiptInfo:
+        """Unified converter from Splitwise Expense to ReceiptInfo"""
+        category_obj = e.getCategory()
+        category_name = category_obj.getName()
+        if categories:
+            category_name = next(
+                (c['name'] for c in categories if str(c['id']) == str(category_obj.getId())),
+                category_name
+            )
+
+        # Split details logic
+        is_split_equally = True
+        sw_users = e.getUsers()
+        users_shares = []
+        if sw_users:
+            try:
+                cost = float(e.getCost())
+                equal_split = cost / len(sw_users)
+            except (ValueError, TypeError, ZeroDivisionError):
+                equal_split = 0
+
+            for u in sw_users:
+                paid_share = float(u.getPaidShare() or 0)
+                owed_share = float(u.getOwedShare() or 0)
+                users_shares.append({
+                    "user_id": u.getId(),
+                    "paid_share": paid_share,
+                    "owed_share": owed_share
+                })
+                if abs(owed_share - equal_split) > 0.01:
+                    is_split_equally = False
+
+        split_option = "equal" if is_split_equally else "exact"
+
+        return cls(
+            id=int(e.getId()) if e.getId() else None,
+            date=cls._coerce_date(e.getDate()),
+            total=e.getCost(),
+            merchant=e.getDescription(),
+            currency_code=e.getCurrencyCode(),
+            notes=e.getDetails(),
+            category=category_name,
+            split_option=split_option,
+            users=users_shares
         )
 
     def update_from_dict(self, data: Dict[str, Any]) -> None:
@@ -153,3 +206,4 @@ class ReceiptInfo:
         self.category = updated.category
         self.split_option = updated.split_option
         self.users = updated.users
+        self.id = updated.id
