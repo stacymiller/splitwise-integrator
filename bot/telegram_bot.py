@@ -318,7 +318,13 @@ class TelegramBot:
 
             try:
                 logger.info(f"Extracting receipt information from file: {temp_file_path}")
-                receipt_info = receipt_processor.extract_receipt_info(temp_file_path)
+                user_text = ""
+                if update.message:
+                    user_text = (update.message.caption or update.message.text or "").strip()
+                receipt_info = receipt_processor.extract_receipt_info(
+                    temp_file_path,
+                    user_text=user_text or None
+                )
                 context.user_data['receipt_info'] = receipt_info
                 logger.info(f"Successfully extracted receipt information: {receipt_info}")
             except Exception as e:

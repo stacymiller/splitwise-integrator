@@ -19,7 +19,7 @@ class ReceiptProcessor:
     def __init__(self):
         self.openai_client = openai.OpenAI(api_key=config.OPENAI_API_KEY)
 
-    def extract_receipt_info(self, file_path) -> ReceiptInfo:
+    def extract_receipt_info(self, file_path, user_text: str | None = None) -> ReceiptInfo:
         """Extract information from receipt using OpenAI's vision model"""
         categories = splitwise_service.get_categories()
         categories_str = ", ".join(cat['name'] for cat in categories)
@@ -53,6 +53,11 @@ class ReceiptProcessor:
         )
 
         content_items = [{"type": "text", "text": initial_prompt}]
+        if user_text:
+            content_items.append({
+                "type": "text",
+                "text": f"USER NOTES FROM MESSAGE:\n{user_text}\n"
+            })
         if is_pdf:
             content_items.append(self._handle_pdf(file_path))
         else:
