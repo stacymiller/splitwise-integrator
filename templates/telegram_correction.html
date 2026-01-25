@@ -336,8 +336,17 @@
         tg.MainButton.onClick(sendData);
     }
 
+    function decodeBase64UrlUtf8(value) {
+        if (!value) return '';
+        const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = normalized.padEnd(normalized.length + (4 - normalized.length % 4) % 4, '=');
+        const binary = atob(padded);
+        const bytes = Uint8Array.from(binary, ch => ch.charCodeAt(0));
+        return new TextDecoder('utf-8').decode(bytes);
+    }
+
     const params = new URLSearchParams(window.location.search);
-    const initial = params.get('data') ? JSON.parse(atob(params.get('data').replace(/-/g, '+').replace(/_/g, '/'))) : {};
+    const initial = params.get('data') ? JSON.parse(decodeBase64UrlUtf8(params.get('data'))) : {};
 
     async function init() {
         const select = document.getElementById('category');
