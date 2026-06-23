@@ -6,6 +6,7 @@ import mimetypes
 import os
 
 import requests
+from splitwise import SplitwiseError
 from telegram import Update, ReplyKeyboardRemove, WebAppInfo, KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 
@@ -444,8 +445,9 @@ class TelegramBot:
         try:
             result = sw.create_expense(receipt_info)
         except Exception as e:
-            logger.error(f"Error creating expense: {e}")
-            await msg_target.reply_text(f"Error creating expense: {e}", reply_markup=ReplyKeyboardRemove())
+            error_details = e.getErrors() if isinstance(e, SplitwiseError) else str(e)
+            logger.error(f"Error creating expense: {error_details}")
+            await msg_target.reply_text(f"Error creating expense: {error_details}", reply_markup=ReplyKeyboardRemove())
             await self._cleanup_receipt_data(context)
             return ConversationHandler.END
 
@@ -734,18 +736,6 @@ class TelegramBot:
 
         # Handle data sent from Telegram WebApp (mini app)
         TelegramBot._application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, self.handle_web_app_data))
-
-        from telegram.ext import TypeHandler
-
-        async def _log_any(update: Update, context: ContextTypes.DEFAULT_TYPE):
-            m = update.message
-            qa = update.callback_query
-            logging.info(
-                f"ANY update: has_message={bool(m)} has_web_app_data={bool(getattr(m, 'web_app_data', None))} "
-                f"has_callback={bool(qa)} chat_id={update.effective_chat.id if update.effective_chat else None}"
-            )
-
-        TelegramBot._application.add_handler(TypeHandler(Update, _log_any), group=1)
 
         # Start the Bot
         TelegramBot._application.run_polling()
