@@ -12,24 +12,24 @@ import PyPDF2
 import pillow_heif
 import openai
 import config
-from core.splitwise_service import splitwise_service
+from core.splitwise_service import SplitwiseService
 from core.receipt_info import ReceiptInfo
 
 class ReceiptProcessor:
     def __init__(self):
         self.openai_client = openai.OpenAI(api_key=config.OPENAI_API_KEY)
 
-    def extract_receipt_info(self, file_path, user_text: str | None = None) -> ReceiptInfo:
+    def extract_receipt_info(self, file_path, sw: SplitwiseService, user_text: str | None = None) -> ReceiptInfo:
         """Extract information from receipt using OpenAI's vision model"""
-        categories = splitwise_service.get_categories()
+        categories = sw.get_categories()
         categories_str = ", ".join(cat['name'] for cat in categories)
         
         # Get group members
-        users = splitwise_service.get_users()
+        users = sw.get_users()
         users_list_str = "\n".join([f"- {u['name']} (ID: {u['id']})" for u in users])
         
         # Get representative examples from past transactions
-        examples = splitwise_service.get_representative_examples()
+        examples = sw.get_representative_examples()
         examples_str = ""
         if examples:
             formatted_examples = [ex.to_dict() for ex in examples]

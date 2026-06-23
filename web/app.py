@@ -4,12 +4,12 @@ import logging
 import json
 import base64
 from datetime import datetime
-from flask import Flask, render_template, request, jsonify, redirect, session, url_for
+from flask import Flask, render_template, request, jsonify, redirect, session, url_for, g
 from werkzeug.utils import secure_filename
 import config
 from bot.telegram_bot import TelegramBot
 from core.receipt_processor import receipt_processor
-from core.splitwise_service import splitwise_service
+from core.splitwise_service import SplitwiseService
 from core.receipt_info import ReceiptInfo
 
 # Initialize Flask app
@@ -23,19 +23,20 @@ def is_authenticated():
     """Check if the user is authenticated with Splitwise"""
     return 'oauth2_access_token' in session
 
-def set_oauth2_token():
-    """Set the OAuth2 token in the Splitwise client"""
-    if is_authenticated():
-        splitwise_service.set_oauth2_token(session['oauth2_access_token'])
-        return True
-    return False
+@app.before_request
+def setup_splitwise_service():
+    """Set up the Splitwise service for the current request"""
+    access_token = session.get('oauth2_access_token')
+    group_id = session.get('splitwise_group_id')
+    # Create a new instance for this request to ensure thread-safety and user isolation
+    g.splitwise_service = SplitwiseService(access_token=access_token, group_id=group_id)
 
 @app.route('/authorize')
 def authorize():
     """Initiate the OAuth2 authorization flow"""
     # Generate the authorization URL
     redirect_uri = f"{config.WEB_APP_URL}/callback"
-    auth_url, state = splitwise_service.get_oauth2_authorize_url(redirect_uri)
+    auth_url, state = g.splitwise_service.get_oauth2_authorize_url(redirect_uri)
 
     # Store the state in the session
     session['oauth2_state'] = state
@@ -76,7 +77,7 @@ def callback():
             return jsonify({'error': 'Missing user_id in state parameter'}), 400
 
         # Exchange the authorization code for an access token
-        access_token = splitwise_service.get_oauth2_access_token(code, redirect_uri)
+        access_token = g.splitwise_service.get_oauth2_access_token(code, redirect_uri)
 
         if not access_token:
             return jsonify({'error': 'Failed to get access token'}), 400
@@ -97,7 +98,7 @@ def callback():
 
         # Exchange the authorization code for an access token
         redirect_uri = f"{config.WEB_APP_URL}/callback"
-        access_token = splitwise_service.get_oauth2_access_token(code, redirect_uri)
+        access_token = g.splitwise_service.get_oauth2_access_token(code, redirect_uri)
 
         if not access_token:
             return jsonify({'error': 'Failed to get access token'}), 400
@@ -106,7 +107,7 @@ def callback():
         session['oauth2_access_token'] = access_token
 
         # Set the access token in the Splitwise client
-        splitwise_service.set_oauth2_token(access_token)
+        g.splitwise_service.set_oauth2_token(access_token)
 
         # Redirect to the group selection page
         return redirect(url_for('index'))
@@ -119,11 +120,8 @@ def select_group():
     if not is_authenticated():
         return redirect(url_for('authorize'))
 
-    # Set the OAuth2 token in the Splitwise client
-    set_oauth2_token()
-
     # Get the list of groups
-    groups = splitwise_service.get_groups()
+    groups = g.splitwise_service.get_groups()
 
     return render_template('select_group.html', groups=groups)
 
@@ -143,7 +141,7 @@ def set_group():
     session['splitwise_group_id'] = group_id
 
     # Set the group ID in the Splitwise service
-    splitwise_service.set_current_group_id(group_id)
+    g.splitwise_service.set_current_group_id(group_id)
 
     # Redirect to the index page
     return redirect(url_for('index'))
@@ -194,11 +192,20 @@ def logout():
 @app.route('/categories')
 def get_categories():
     """Return the list of categories as JSON"""
-    if is_authenticated():
-        set_oauth2_token()
-    categories = splitwise_service.get_categories()
+    categories = g.splitwise_service.get_categories()
     result = [dict(id=c['id'], name=c['name']) for c in sorted(categories, key=lambda c: c['name'].lower())]
     return jsonify(result)
+
+@app.route('/group_members')
+def get_group_members():
+    """Return the list of members for the current group as JSON"""
+    users = g.splitwise_service.get_users()
+    current_user_id = g.splitwise_service.get_current_user_id()
+    
+    return jsonify({
+        'members': [dict(id=u['id'], name=u['name']) for u in users],
+        'current_user_id': current_user_id
+    })
 
 @app.route('/')
 def index():
@@ -206,14 +213,8 @@ def index():
         # Check if the user is authenticated
         authenticated = is_authenticated()
         if authenticated:
-            # Set the OAuth2 token in the Splitwise client
-            set_oauth2_token()
-
             # Check if a group has been selected
-            if 'splitwise_group_id' in session:
-                # Set the group ID in the Splitwise service
-                splitwise_service.set_current_group_id(session['splitwise_group_id'])
-            elif not request.path.startswith('/select_group'):
+            if 'splitwise_group_id' not in session and not request.path.startswith('/select_group'):
                 # If no group has been selected, redirect to the group selection page
                 return redirect(url_for('select_group'))
 
@@ -236,9 +237,6 @@ def upload_file():
     # Check if the user is authenticated
     if not is_authenticated():
         return jsonify({'error': 'Not authenticated with Splitwise'}), 401
-
-    # Set the OAuth2 token in the Splitwise client
-    set_oauth2_token()
 
     if 'file' not in request.files:
         return jsonify({'error': 'No file part'}), 400
@@ -270,16 +268,13 @@ def process_receipt():
     if not is_authenticated():
         return jsonify({'error': 'Not authenticated with Splitwise'}), 401
 
-    # Set the OAuth2 token in the Splitwise client
-    set_oauth2_token()
-
     # Get the filepath from the request
     filepath = request.json.get('filepath')
     if not filepath:
         return jsonify({'error': 'No filepath provided'}), 400
 
     # Extract information from the image
-    receipt_info = receipt_processor.extract_receipt_info(filepath)
+    receipt_info = receipt_processor.extract_receipt_info(filepath, sw=g.splitwise_service)
     logging.info(f"Receipt info: {receipt_info}")
 
     if receipt_info:
@@ -304,9 +299,6 @@ def create_expense():
     if not is_authenticated():
         return jsonify({'error': 'Not authenticated with Splitwise'}), 401
 
-    # Set the OAuth2 token in the Splitwise client
-    set_oauth2_token()
-
     # Get the receipt info and filepath from the request
     data = request.json
     receipt_info_data = data.get('receipt_info')
@@ -322,7 +314,7 @@ def create_expense():
 
         # Check for potential duplicates unless force-proceeding
         if not force:
-            duplicates = splitwise_service.find_potential_duplicates(receipt_info)
+            duplicates = g.splitwise_service.find_potential_duplicates(receipt_info)
             if duplicates:
                 return jsonify({
                     'success': False,
@@ -332,7 +324,7 @@ def create_expense():
                 })
 
         # Create the expense using the Splitwise service
-        result = splitwise_service.create_expense(receipt_info, filepath)
+        result = g.splitwise_service.create_expense(receipt_info, filepath)
 
         return jsonify({
             'success': True,

@@ -18,6 +18,10 @@ class ReceiptInfo:
     category: Optional[str] = None
     split_option: str = "equal"
     users: list[dict[str, Any]] = field(default_factory=list)
+    # Optional fields for simplified/auto-split logic (instead of manual users list)
+    payer_id: Optional[int] = None
+    share_type: Optional[str] = None # 'equal', 'amount', 'percentage'
+    share_value: Optional[str] = None
     id: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -32,9 +36,37 @@ class ReceiptInfo:
 
     def to_summary(self, user_mapping: Optional[Dict[int, str]] = None) -> str:
         """Returns a human-readable summary of the receipt information."""
-        if self.split_option == 'equal':
+        date_str = self.date.strftime('%B %d, %Y')
+        if self.date.hour != 0 or self.date.minute != 0:
+            date_str = self.date.strftime('%B %d, %Y, %H:%M')
+
+        lines = [
+            f"Merchant: {self.merchant}",
+            f"Amount: {self.total} {self.currency_code}",
+            f"Date: {date_str}",
+            f"Category: {self.category or 'Not available'}"
+        ]
+
+        if self.split_option == 'equal' and self.payer_id is None:
             split_summary = "Split equally"
+        elif self.share_type or self.payer_id is not None:
+            # Simplified split info
+            payer_name = "You"
+            if self.payer_id and user_mapping:
+                payer_name = user_mapping.get(self.payer_id, f"ID {self.payer_id}")
+            
+            lines.append(f"Paid by: {payer_name}")
+            
+            if self.share_type == 'equal':
+                split_summary = "Split equally"
+            elif self.share_type == 'amount':
+                split_summary = f"Your share: {self.share_value} {self.currency_code}"
+            elif self.share_type == 'percentage':
+                split_summary = f"Your share: {self.share_value}%"
+            else:
+                split_summary = "Split equally"
         else:
+            # Manual users list info (legacy or complex)
             shares = []
             for u in self.users:
                 try:
@@ -49,18 +81,9 @@ class ReceiptInfo:
                     shares.append(f"{user_label} owes {owed}")
             split_summary = "Custom split: " + ", ".join(shares) if shares else "Custom split"
 
-        date_str = self.date.strftime('%B %d, %Y')
-        if self.date.hour != 0 or self.date.minute != 0:
-            date_str = self.date.strftime('%B %d, %Y, %H:%M')
-
-        lines = [
-            f"Merchant: {self.merchant}",
-            f"Amount: {self.total} {self.currency_code}",
-            f"Date: {date_str}",
-            f"Category: {self.category or 'Not available'}",
-            f"Notes: {self.notes or 'None'}",
-            f"Split: {split_summary}"
-        ]
+        lines.append(f"Split: {split_summary}")
+        lines.append(f"Notes: {self.notes or 'None'}")
+        
         return "\n".join(f"- {line}" for line in lines)
 
     @staticmethod
@@ -135,6 +158,12 @@ class ReceiptInfo:
             split_option = 'equal' if data.get('split_equally', True) else 'exact'
 
         users = data.get('users', [])
+        
+        # New simplified split fields
+        payer_id = data.get('payer_id')
+        share_type = data.get('share_type')
+        share_value = data.get('share_value')
+        
         id_val = data.get('id')
 
         return cls(
@@ -146,6 +175,9 @@ class ReceiptInfo:
             category=category,
             split_option=split_option,
             users=users,
+            payer_id=int(payer_id) if payer_id is not None else None,
+            share_type=share_type,
+            share_value=share_value,
             id=int(id_val) if id_val is not None else None
         )
 
@@ -206,4 +238,7 @@ class ReceiptInfo:
         self.category = updated.category
         self.split_option = updated.split_option
         self.users = updated.users
+        self.payer_id = updated.payer_id
+        self.share_type = updated.share_type
+        self.share_value = updated.share_value
         self.id = updated.id

@@ -8,15 +8,18 @@ import config
 from core.receipt_info import ReceiptInfo
 
 class SplitwiseService:
-    def __init__(self):
+    def __init__(self, access_token=None, group_id=None):
         self.client = splitwise.Splitwise(
             config.SPLITWISE_CONSUMER_KEY,
             config.SPLITWISE_CONSUMER_SECRET
         )
+        self.access_token = access_token
+        if access_token:
+            self.client.setOAuth2AccessToken(access_token)
+        
+        self.current_group_id = group_id or config.SPLITWISE_GROUP_ID
         self.categories = []
         self.users = []
-        self.access_token = None
-        self.current_group_id = config.SPLITWISE_GROUP_ID  # Default group ID from config
         self._current_user_id = None
 
     def get_current_user_id(self):
@@ -224,16 +227,19 @@ class SplitwiseService:
         expense.setGroupId(int(self.current_group_id))
         expense.setCurrencyCode(receipt_info.currency_code)
 
-        # Handle split options
-        is_equal = receipt_info.split_option == 'equal'
-        expense.setSplitEqually(is_equal)
-        if not is_equal:
-            for user_data in receipt_info.users:
-                user = ExpenseUser()
-                user.setId(user_data['user_id'])
-                user.setPaidShare(user_data['paid_share'])
-                user.setOwedShare(user_data['owed_share'])
-                expense.addUser(user)
+        # Handle splitting
+        if receipt_info.payer_id is not None or receipt_info.split_option == 'auto':
+            self._apply_auto_split(expense, receipt_info)
+        else:
+            is_equal = receipt_info.split_option == 'equal'
+            expense.setSplitEqually(is_equal)
+            if not is_equal:
+                for user_data in receipt_info.users:
+                    user = ExpenseUser()
+                    user.setId(user_data['user_id'])
+                    user.setPaidShare(user_data['paid_share'])
+                    user.setOwedShare(user_data['owed_share'])
+                    expense.addUser(user)
 
         if receipt_info.notes:
             expense.setDetails(receipt_info.notes)
@@ -267,6 +273,58 @@ class SplitwiseService:
             'human_readable_confirmation': human_readable
         }
 
+    def _apply_auto_split(self, expense: Expense, receipt_info: ReceiptInfo):
+        """Calculate and set shares based on payer_id and simplified share info."""
+        total = float(receipt_info.total)
+        payer_id = receipt_info.payer_id if receipt_info.payer_id is not None else self.get_current_user_id()
+        current_user_id = self.get_current_user_id()
+        
+        group_users = self.get_users()
+        num_users = len(group_users)
+        if num_users == 0:
+            expense.setSplitEqually(True)
+            return
+
+        # Default: split equally among all
+        equal_owed = total / num_users
+        
+        # Adjust my_owed based on share_type/value
+        my_owed = equal_owed
+        if receipt_info.share_type == 'amount' and receipt_info.share_value:
+            try:
+                my_owed = float(receipt_info.share_value)
+            except (ValueError, TypeError):
+                pass
+        elif receipt_info.share_type == 'percentage' and receipt_info.share_value:
+            try:
+                percentage = float(receipt_info.share_value)
+                my_owed = (percentage / 100.0) * total
+            except (ValueError, TypeError):
+                pass
+        
+        # Calculate what others owe (equally sharing the remainder)
+        others_count = num_users - 1
+        if others_count > 0:
+            other_owed = (total - my_owed) / others_count
+        else:
+            other_owed = 0
+
+        for u in group_users:
+            eu = ExpenseUser()
+            uid = u['id']
+            eu.setId(uid)
+            
+            # Paid share: payer pays all
+            eu.setPaidShare(str(total) if uid == payer_id else "0.0")
+            
+            # Owed share: me vs others
+            if uid == current_user_id:
+                eu.setOwedShare(f"{my_owed:.2f}")
+            else:
+                eu.setOwedShare(f"{other_owed:.2f}")
+            
+            expense.addUser(eu)
+
     def attach_receipt_to_expense(self, expense_id, receipt_path):
         """Attach a receipt to an existing expense using the Splitwise API"""
         url = f"https://secure.splitwise.com/api/v3.0/update_expense/{expense_id}"
@@ -291,5 +349,3 @@ class SplitwiseService:
 
             return response.json()
 
-# Create a singleton instance
-splitwise_service = SplitwiseService()

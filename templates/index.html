@@ -64,6 +64,32 @@
             line-height: 1;
         }
         .clear-btn:hover { background: rgba(0,0,0,0.2); }
+        .selector-group {
+            display: flex;
+            background: #e9ecef;
+            border-radius: 8px;
+            padding: 4px;
+            gap: 4px;
+        }
+        .selector-item {
+            flex: 1;
+            text-align: center;
+            padding: 8px 4px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+            color: #495057;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .selector-item.active {
+            background: #0d6efd;
+            color: #fff;
+        }
+        .d-none { display: none !important; }
     </style>
 </head>
 <body>
@@ -97,7 +123,7 @@
                 <div class="col-md-6">
                     <label for="total" class="form-label">Total Amount</label>
                     <div class="input-group">
-                        <input type="number" class="form-control" id="total" name="total" step="0.01" required>
+                        <input type="text" class="form-control" id="total" name="total" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*" oninput="this.value = this.value.replace(',', '.')" required>
                         <span class="input-group-text cur-addon">EUR</span>
                     </div>
                 </div>
@@ -126,37 +152,29 @@
                 <input type="text" class="form-control" id="currency_code" name="currency_code" required>
             </div>
             <div class="mb-3">
-                <label class="form-label">Split Options</label>
-                <div class="form-check">
-                    <input class="form-check-input" type="radio" name="splitOption" id="splitEqual" value="equal" checked>
-                    <label class="form-check-label" for="splitEqual">Split equally (50/50)</label>
+                <label class="form-label">Who paid?</label>
+                <div id="whoPaidSelector" class="selector-group">
+                    <!-- Populated via JS -->
                 </div>
-                <div class="form-check">
-                    <input class="form-check-input" type="radio" name="splitOption" id="splitYouPaid" value="youPaid">
-                    <label class="form-check-label" for="splitYouPaid">You paid, they owe X</label>
-                    <div class="input-group mt-2 split-container" id="youPaidContainer" style="display: none;">
-                        <span class="input-group-text">They owe</span>
-                        <input type="number" class="form-control" id="theyOwe" name="theyOwe" step="0.01" min="0">
-                        <span class="input-group-text cur-addon">EUR</span>
-                    </div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">How it's shared?</label>
+                <div id="shareTypeSelector" class="selector-group mb-2">
+                    <div class="selector-item active" data-value="equal">Equally</div>
+                    <div class="selector-item" data-value="amount">Your share (Amt)</div>
+                    <div class="selector-item" data-value="percentage">Your share (%)</div>
                 </div>
-                <div class="form-check">
-                    <input class="form-check-input" type="radio" name="splitOption" id="splitTheyPaid" value="theyPaid">
-                    <label class="form-check-label" for="splitTheyPaid">They paid, you owe X</label>
-                    <div class="input-group mt-2 split-container" id="theyPaidContainer" style="display: none;">
-                        <span class="input-group-text">You owe</span>
-                        <input type="number" class="form-control" id="youOwe" name="youOwe" step="0.01" min="0">
-                        <span class="input-group-text cur-addon">EUR</span>
-                    </div>
+                
+                <div id="shareAmountContainer" class="input-group mt-2 d-none">
+                    <span class="input-group-text">You owe</span>
+                    <input type="text" class="form-control" id="myShareAmount" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*" oninput="this.value = this.value.replace(',', '.')">
+                    <span class="input-group-text cur-addon">EUR</span>
                 </div>
-                <div class="form-check">
-                    <input class="form-check-input" type="radio" name="splitOption" id="splitPercentage" value="percentage">
-                    <label class="form-check-label" for="splitPercentage">Split by percentage</label>
-                    <div class="input-group mt-2 split-container" id="percentageContainer" style="display: none;">
-                        <span class="input-group-text">Your percentage</span>
-                        <input type="number" class="form-control" id="yourPercentage" name="yourPercentage" step="0.01" min="0" max="100" value="50">
-                        <span class="input-group-text">%</span>
-                    </div>
+                
+                <div id="sharePercentageContainer" class="input-group mt-2 d-none">
+                    <span class="input-group-text">You owe</span>
+                    <input type="text" class="form-control" id="mySharePercentage" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*" oninput="this.value = this.value.replace(',', '.')">
+                    <span class="input-group-text">%</span>
                 </div>
             </div>
             <input type="hidden" id="filepath" name="filepath">
@@ -177,6 +195,8 @@
     <script>
         const $ = id => document.getElementById(id);
         let pastedImageFile = null;
+        let groupMembers = [];
+        let currentUserId = null;
 
         const setStatus = (html, className = '') => {
             const s = $('status');
@@ -202,16 +222,79 @@
                 cats.forEach(c => sel.add(new Option(c.name, c.name)));
             } catch (e) { console.error(e); }
 
+            try {
+                const groupData = await (await fetch('/group_members')).json();
+                groupMembers = groupData.members;
+                currentUserId = groupData.current_user_id;
+                
+                const whoPaidContainer = $('whoPaidSelector');
+                whoPaidContainer.innerHTML = '';
+                groupMembers.forEach(member => {
+                    const item = document.createElement('div');
+                    item.className = 'selector-item';
+                    if (member.id == currentUserId) {
+                        item.textContent = 'You';
+                        item.classList.add('active');
+                        item.dataset.userId = currentUserId;
+                    } else {
+                        item.textContent = groupMembers.length === 2 ? 'Them' : member.name;
+                        item.dataset.userId = member.id;
+                    }
+                    item.onclick = () => {
+                        whoPaidContainer.querySelectorAll('.selector-item').forEach(i => i.classList.remove('active'));
+                        item.classList.add('active');
+                    };
+                    whoPaidContainer.appendChild(item);
+                });
+            } catch (e) { console.error(e); }
+
+            const shareSelector = $('shareTypeSelector');
+            shareSelector.querySelectorAll('.selector-item').forEach(item => {
+                item.onclick = () => {
+                    shareSelector.querySelectorAll('.selector-item').forEach(i => i.classList.remove('active'));
+                    item.classList.add('active');
+                    
+                    const val = item.dataset.value;
+                    $('shareAmountContainer').classList.toggle('d-none', val !== 'amount');
+                    $('sharePercentageContainer').classList.toggle('d-none', val !== 'percentage');
+                };
+            });
+
+            const amountInput = $('myShareAmount');
+            const percentInput = $('mySharePercentage');
+            
+            const syncShare = (from) => {
+                const total = parseFloat($('total').value.replace(',', '.')) || 0;
+                if (total <= 0) return;
+                if (from === 'amount') {
+                    const amt = parseFloat(amountInput.value.replace(',', '.')) || 0;
+                    percentInput.value = (amt / total * 100).toFixed(1);
+                } else {
+                    const pct = parseFloat(percentInput.value.replace(',', '.')) || 0;
+                    amountInput.value = (total * pct / 100).toFixed(2);
+                }
+            };
+
+            amountInput.addEventListener('input', (e) => { 
+                e.target.value = e.target.value.replace(',', '.'); 
+                syncShare('amount'); 
+            });
+            percentInput.addEventListener('input', (e) => { 
+                e.target.value = e.target.value.replace(',', '.'); 
+                syncShare('percentage'); 
+            });
+
+            const totalInput = $('total');
+            totalInput.oninput = (e) => {
+                e.target.value = e.target.value.replace(',', '.');
+                const activeShareType = document.querySelector('#shareTypeSelector .selector-item.active').dataset.value;
+                if (activeShareType === 'percentage') syncShare('percentage');
+                else if (activeShareType === 'amount') syncShare('amount');
+            };
+
             $('currency_code').onchange = updateCur;
             $('notes').oninput = updateClearBtn;
             $('clearNotes').onclick = () => { $('notes').value = ''; updateClearBtn(); $('notes').focus(); };
-            document.querySelectorAll('input[name="splitOption"]').forEach(el => {
-                el.onchange = () => {
-                    document.querySelectorAll('.split-container').forEach(c => c.style.display = 'none');
-                    const active = $(el.value + 'Container');
-                    if (active) active.style.display = 'flex';
-                };
-            });
         }
 
         const handlePaste = e => {
@@ -261,14 +344,31 @@
 
         $('receiptDetailsForm').onsubmit = async e => {
             e.preventDefault();
+            const totalVal = (document.getElementById('total').value || '0').replace(',', '.');
+            
+            const whoPaidItem = document.querySelector('#whoPaidSelector .selector-item.active');
+            const shareTypeItem = document.querySelector('#shareTypeSelector .selector-item.active');
+            const shareType = shareTypeItem ? shareTypeItem.dataset.value : 'equal';
+            
+            let shareValue = null;
+            if (shareType === 'amount') {
+                shareValue = (document.getElementById('myShareAmount').value || '0').replace(',', '.');
+            } else if (shareType === 'percentage') {
+                shareValue = (document.getElementById('mySharePercentage').value || '0').replace(',', '.');
+            }
+
             const data = {
-                merchant: $('merchant').value, total: $('total').value, date: $('date').value,
-                category: $('category').value, notes: $('notes').value, currency_code: $('currency_code').value,
-                splitOption: document.querySelector('input[name="splitOption"]:checked').value
+                merchant: $('merchant').value, 
+                total: totalVal, 
+                date: $('date').value,
+                category: $('category').value, 
+                notes: $('notes').value, 
+                currency_code: $('currency_code').value,
+                split_option: 'auto',
+                payer_id: whoPaidItem ? parseInt(whoPaidItem.dataset.userId) : null,
+                share_type: shareType,
+                share_value: shareValue
             };
-            if (data.splitOption === 'youPaid') data.theyOwe = $('theyOwe').value;
-            if (data.splitOption === 'theyPaid') data.youOwe = $('youOwe').value;
-            if (data.splitOption === 'percentage') data.yourPercentage = $('yourPercentage').value;
 
             const submitExpense = async (force = false) => {
                 try {
@@ -302,7 +402,7 @@
                     $('editReceiptForm').style.display = 'block';
                 }
             };
-
+            
             await submitExpense();
         };
 

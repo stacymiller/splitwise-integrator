@@ -94,7 +94,35 @@
             color: var(--tg-theme-hint-color, #999);
             margin-left: 8px;
         }
-    
+
+        .selector-group {
+            display: flex;
+            background: var(--bs-secondary-bg);
+            border-radius: 12px;
+            padding: 4px;
+            gap: 4px;
+        }
+
+        .selector-item {
+            flex: 1;
+            text-align: center;
+            padding: 10px 4px;
+            border-radius: 9px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+            color: var(--tg-theme-text-color, #000);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .selector-item.active {
+            background: var(--tg-theme-button-color, #2ea6ff);
+            color: var(--tg-theme-button-text-color, #fff);
+        }
+
         .clear-btn {
             position: absolute;
             top: 36px;
@@ -190,7 +218,7 @@
     <div class="row mb-3">
         <div class="col">
             <label for="total" class="form-label">Total</label>
-            <input id="total" class="form-control" type="number" inputmode="decimal" step="0.01" placeholder="0.00"/>
+            <input id="total" class="form-control" type="text" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*" oninput="this.value = this.value.replace(',', '.')" placeholder="0.00"/>
         </div>
         <div class="col">
             <label for="currency_code" class="form-label">Currency</label>
@@ -217,40 +245,29 @@
     </div>
 
     <div class="mb-3">
-        <label class="form-label">Split Options</label>
+        <label class="form-label">Who paid?</label>
+        <div id="whoPaidSelector" class="selector-group">
+            <!-- Populated via JS -->
+        </div>
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">How it's shared?</label>
+        <div id="shareTypeSelector" class="selector-group mb-2">
+            <div class="selector-item active" data-value="equal">Equally</div>
+            <div class="selector-item" data-value="amount">Your share (Amt)</div>
+            <div class="selector-item" data-value="percentage">Your share (%)</div>
+        </div>
         
-        <label class="form-check">
-            <input class="form-check-input" type="radio" name="splitOption" id="splitEqual" value="equal" checked>
-            <span class="form-check-label">Split equally (50/50)</span>
-        </label>
-
-        <label class="form-check">
-            <input class="form-check-input" type="radio" name="splitOption" id="splitYouPaid" value="youPaid">
-            <span class="form-check-label">You paid, they owe X</span>
-        </label>
-        <div class="split-container d-none" id="youPaidContainer">
-            <span class="prefix">They owe</span>
-            <input type="number" id="theyOwe" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
-            <span class="suffix cur-addon">EUR</span>
-        </div>
-
-        <label class="form-check">
-            <input class="form-check-input" type="radio" name="splitOption" id="splitTheyPaid" value="theyPaid">
-            <span class="form-check-label">They paid, you owe X</span>
-        </label>
-        <div class="split-container d-none" id="theyPaidContainer">
+        <div id="shareAmountContainer" class="split-container d-none">
             <span class="prefix">You owe</span>
-            <input type="number" id="youOwe" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
+            <input type="text" id="myShareAmount" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*" oninput="this.value = this.value.replace(',', '.')" placeholder="0.00">
             <span class="suffix cur-addon">EUR</span>
         </div>
-
-        <label class="form-check">
-            <input class="form-check-input" type="radio" name="splitOption" id="splitPercentage" value="percentage">
-            <span class="form-check-label">Split by percentage</span>
-        </label>
-        <div class="split-container d-none" id="percentageContainer">
-            <span class="prefix">Your percentage</span>
-            <input type="number" id="yourPercentage" inputmode="decimal" step="0.01" min="0" max="100" value="50">
+        
+        <div id="sharePercentageContainer" class="split-container d-none">
+            <span class="prefix">You owe</span>
+            <input type="text" id="mySharePercentage" inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*" oninput="this.value = this.value.replace(',', '.')" placeholder="50">
             <span class="suffix">%</span>
         </div>
     </div>
@@ -271,51 +288,33 @@
 
     function collectData() {
         const cat = document.getElementById('category');
-        const splitOption = document.querySelector('input[name="splitOption"]:checked').value;
-        const total = parseFloat(document.getElementById('total').value || '0') || 0;
+        const totalValue = (document.getElementById('total').value || '0').replace(',', '.');
         
+        const whoPaidItem = document.querySelector('#whoPaidSelector .selector-item.active');
+        const shareTypeItem = document.querySelector('#shareTypeSelector .selector-item.active');
+        const shareType = shareTypeItem ? shareTypeItem.dataset.value : 'equal';
+        
+        let shareValue = null;
+        if (shareType === 'amount') {
+            shareValue = (document.getElementById('myShareAmount').value || '0').replace(',', '.');
+        } else if (shareType === 'percentage') {
+            shareValue = (document.getElementById('mySharePercentage').value || '0').replace(',', '.');
+        }
+
         const data = {
             merchant: document.getElementById('merchant').value?.trim() || null,
-            total: total.toString(),
+            total: totalValue,
             currency_code: document.getElementById('currency_code').value?.trim().toUpperCase() || 'EUR',
             date: document.getElementById('date').value || null,
             notes: document.getElementById('notes').value?.trim() || null,
             category: cat.selectedIndex > 0 ? cat.options[cat.selectedIndex].textContent : null,
             category_id: cat.value || null,
-            split_option: splitOption === 'equal' ? 'equal' : 'exact',
-            users: [],
+            split_option: 'auto',
+            payer_id: whoPaidItem ? parseInt(whoPaidItem.dataset.userId) : null,
+            share_type: shareType,
+            share_value: shareValue,
             _source: 'telegram_web_app'
         };
-
-        const groupMembers = initial.group_members || [];
-        const currentUserId = initial.current_user_id;
-        const otherUser = groupMembers.find(u => u.id != currentUserId);
-
-        if (splitOption !== 'equal' && otherUser && currentUserId) {
-            let myPaid = "0", myOwed = "0", otherPaid = "0", otherOwed = "0";
-            
-            if (splitOption === 'youPaid') {
-                const theyOwe = parseFloat(document.getElementById('theyOwe').value) || 0;
-                myPaid = total.toFixed(2);
-                myOwed = (total - theyOwe).toFixed(2);
-                otherOwed = theyOwe.toFixed(2);
-            } else if (splitOption === 'theyPaid') {
-                const youOwe = parseFloat(document.getElementById('youOwe').value) || 0;
-                otherPaid = total.toFixed(2);
-                otherOwed = (total - youOwe).toFixed(2);
-                myOwed = youOwe.toFixed(2);
-            } else if (splitOption === 'percentage') {
-                const myPercent = parseFloat(document.getElementById('yourPercentage').value) || 0;
-                myPaid = total.toFixed(2);
-                myOwed = (total * myPercent / 100).toFixed(2);
-                otherOwed = (total - parseFloat(myOwed)).toFixed(2);
-            }
-
-            data.users = [
-                { user_id: parseInt(currentUserId), paid_share: myPaid, owed_share: myOwed },
-                { user_id: parseInt(otherUser.id), paid_share: otherPaid, owed_share: otherOwed }
-            ];
-        }
 
         return data;
     }
@@ -356,15 +355,72 @@
             const cur = currencyInput.value?.trim().toUpperCase() || 'EUR';
             document.querySelectorAll('.cur-addon').forEach(el => el.textContent = cur);
         };
+        const totalInput = document.getElementById('total');
+        totalInput.oninput = (e) => {
+            e.target.value = e.target.value.replace(',', '.');
+            const activeShareType = document.querySelector('#shareTypeSelector .selector-item.active').dataset.value;
+            if (activeShareType === 'percentage') syncShare('percentage');
+            else if (activeShareType === 'amount') syncShare('amount');
+        };
+        
         currencyInput.onchange = updateCur;
         currencyInput.oninput = updateCur;
 
-        document.querySelectorAll('input[name="splitOption"]').forEach(el => {
-            el.onchange = () => {
-                document.querySelectorAll('.split-container').forEach(c => c.classList.add('d-none'));
-                const active = document.getElementById(el.value + 'Container');
-                if (active) active.classList.remove('d-none');
+        const whoPaidContainer = document.getElementById('whoPaidSelector');
+        const shareSelector = document.getElementById('shareTypeSelector');
+        const members = initial.group_members || [];
+        const myId = initial.current_user_id;
+        
+        members.forEach(member => {
+            const item = document.createElement('div');
+            item.className = 'selector-item';
+            if (member.id == myId) {
+                item.textContent = 'You';
+                item.classList.add('active'); // Default
+                item.dataset.userId = myId;
+            } else {
+                item.textContent = members.length === 2 ? 'Them' : member.name;
+                item.dataset.userId = member.id;
+            }
+            item.onclick = () => {
+                whoPaidContainer.querySelectorAll('.selector-item').forEach(i => i.classList.remove('active'));
+                item.classList.add('active');
             };
+            whoPaidContainer.appendChild(item);
+        });
+
+        const amountInput = document.getElementById('myShareAmount');
+        const percentInput = document.getElementById('mySharePercentage');
+        
+        const syncShare = (from) => {
+            const total = parseFloat(document.getElementById('total').value.replace(',', '.')) || 0;
+            if (total <= 0) return;
+            if (from === 'amount') {
+                const amt = parseFloat(amountInput.value.replace(',', '.')) || 0;
+                percentInput.value = (amt / total * 100).toFixed(1);
+            } else {
+                const pct = parseFloat(percentInput.value.replace(',', '.')) || 0;
+                amountInput.value = (total * pct / 100).toFixed(2);
+            }
+        };
+
+        shareSelector.querySelectorAll('.selector-item').forEach(item => {
+            item.onclick = () => {
+                shareSelector.querySelectorAll('.selector-item').forEach(i => i.classList.remove('active'));
+                item.classList.add('active');
+                const val = item.dataset.value;
+                document.getElementById('shareAmountContainer').classList.toggle('d-none', val !== 'amount');
+                document.getElementById('sharePercentageContainer').classList.toggle('d-none', val !== 'percentage');
+            };
+        });
+
+        amountInput.addEventListener('input', (e) => { 
+            e.target.value = e.target.value.replace(',', '.'); 
+            syncShare('amount'); 
+        });
+        percentInput.addEventListener('input', (e) => { 
+            e.target.value = e.target.value.replace(',', '.'); 
+            syncShare('percentage'); 
         });
 
         try {
@@ -403,25 +459,37 @@
         const isEqually = initial.split_option ? (initial.split_option === 'equal') : (initial.split_equally !== false);
 
         if (!isEqually && initial.users && initial.users.length > 0) {
-            const myId = initial.current_user_id;
             const me = initial.users.find(u => u.user_id == myId);
-            const others = initial.users.filter(u => u.user_id != myId);
+            const payer = initial.users.find(u => parseFloat(u.paid_share) > 0);
             
-            if (me && others.length > 0) {
-                const other = others[0];
-                if (parseFloat(me.paid_share) > 0 && parseFloat(other.paid_share) == 0) {
-                    document.getElementById('splitYouPaid').checked = true;
-                    document.getElementById('splitYouPaid').dispatchEvent(new Event('change'));
-                    document.getElementById('theyOwe').value = other.owed_share;
-                } else if (parseFloat(other.paid_share) > 0 && parseFloat(me.paid_share) == 0) {
-                    document.getElementById('splitTheyPaid').checked = true;
-                    document.getElementById('splitTheyPaid').dispatchEvent(new Event('change'));
-                    document.getElementById('youOwe').value = me.owed_share;
+            if (payer) {
+                whoPaidContainer.querySelectorAll('.selector-item').forEach(i => {
+                    if (i.dataset.userId == payer.user_id) {
+                        whoPaidContainer.querySelectorAll('.selector-item').forEach(it => it.classList.remove('active'));
+                        i.classList.add('active');
+                    }
+                });
+            }
+
+            if (me) {
+                const totalVal = parseFloat(initial.total || 0);
+                const myOwed = parseFloat(me.owed_share || 0);
+                
+                // Decide which share type to show
+                if (Math.abs(myOwed - totalVal/initial.users.length) < 0.01) {
+                    // It's effectively equal
+                    shareSelector.querySelector('[data-value="equal"]').click();
+                } else {
+                    // Show as amount
+                    shareSelector.querySelector('[data-value="amount"]').click();
+                    document.getElementById('myShareAmount').value = myOwed.toFixed(2);
+                    if (totalVal > 0) {
+                        document.getElementById('mySharePercentage').value = (myOwed / totalVal * 100).toFixed(1);
+                    }
                 }
             }
         } else {
-            document.getElementById('splitEqual').checked = true;
-            document.getElementById('splitEqual').dispatchEvent(new Event('change'));
+            shareSelector.querySelector('[data-value="equal"]').click();
         }
 
         // Trigger clear button visibility check

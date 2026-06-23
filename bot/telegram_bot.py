@@ -11,7 +11,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 
 import config
 from core.receipt_processor import receipt_processor
-from core.splitwise_service import splitwise_service
+from core.splitwise_service import SplitwiseService
 from core.receipt_info import ReceiptInfo
 
 # Enable logging
@@ -128,7 +128,8 @@ class TelegramBot:
         state = base64.b64encode(json.dumps(state_data).encode('utf-8')).decode('utf-8')
 
         # Get the authorization URL from the Splitwise service
-        auth_url, state_token = splitwise_service.get_oauth2_authorize_url(callback_url, state)
+        sw = self._get_service(context)
+        auth_url, state_token = sw.get_oauth2_authorize_url(callback_url, state)
 
         # Store the user_id in the context.user_data to identify the user later
         if not context.user_data.get('user_id'):
@@ -153,7 +154,8 @@ class TelegramBot:
             return ConversationHandler.END
 
         # Get the list of groups
-        groups = splitwise_service.get_groups()
+        sw = self._get_service(context)
+        groups = sw.get_groups()
 
         if not groups:
             await update.message.reply_text(
@@ -204,7 +206,8 @@ class TelegramBot:
             self.set_group_id(user_id, selected_group['id'], context)
 
             # Set the group ID in the Splitwise service
-            splitwise_service.set_current_group_id(selected_group['id'])
+            sw = self._get_service(context)
+            sw.set_current_group_id(selected_group['id'])
 
             await update.message.reply_text(
                 f"You have selected the group: {selected_group['name']}\n\n"
@@ -296,7 +299,8 @@ class TelegramBot:
             # Check if the user has selected a group
             if self.has_selected_group(user_id, context):
                 group_id = self.get_group_id(user_id, context)
-                splitwise_service.set_current_group_id(group_id)
+                sw = self._get_service(context)
+                sw.set_current_group_id(group_id)
             else:
                 logger.info(f"User {user_id} has not selected a group")
                 await update.message.reply_text(
@@ -321,8 +325,11 @@ class TelegramBot:
                 user_text = ""
                 if update.message:
                     user_text = (update.message.caption or update.message.text or "").strip()
+                
+                sw = self._get_service(context)
                 receipt_info = receipt_processor.extract_receipt_info(
                     temp_file_path,
+                    sw=sw,
                     user_text=user_text or None
                 )
                 context.user_data['receipt_info'] = receipt_info
@@ -339,8 +346,9 @@ class TelegramBot:
             
             # Add group members and current user ID to web app data
             try:
-                serializable_info['group_members'] = [{'id': u['id'], 'name': u['name']} for u in splitwise_service.get_users()]
-                serializable_info['current_user_id'] = splitwise_service.get_current_user_id()
+                sw = self._get_service(context)
+                serializable_info['group_members'] = [{'id': u['id'], 'name': u['name']} for u in sw.get_users()]
+                serializable_info['current_user_id'] = sw.get_current_user_id()
             except Exception as e:
                 logger.error(f"Error fetching users for web app: {e}")
 
@@ -359,7 +367,8 @@ class TelegramBot:
             correction_reply_markup = ReplyKeyboardMarkup(correction_keyboard, resize_keyboard=True, one_time_keyboard=True)
 
             # Create summary
-            user_mapping = {u['id']: u['name'] for u in splitwise_service.get_users()}
+            sw = self._get_service(context)
+            user_mapping = {u['id']: u['name'] for u in sw.get_users()}
             summary = receipt_info.to_summary(user_mapping)
 
             await update.message.reply_text(
@@ -378,6 +387,12 @@ class TelegramBot:
             )
             return ConversationHandler.END
 
+    def _get_service(self, context: ContextTypes.DEFAULT_TYPE) -> SplitwiseService:
+        """Get an initialized SplitwiseService for the current user context."""
+        access_token = context.user_data.get('access_token')
+        group_id = context.user_data.get('group_id')
+        return SplitwiseService(access_token=access_token, group_id=group_id)
+
     async def _ensure_authenticated(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         """Ensure user is authenticated and token is set in the service."""
         user_id = update.effective_user.id
@@ -390,18 +405,16 @@ class TelegramBot:
             )
             return False
             
-        access_token = self.get_access_token(user_id, context)
-        if access_token:
-            splitwise_service.set_oauth2_token(access_token)
         return True
 
     async def _finalize_expense(self, update: Update, context: ContextTypes.DEFAULT_TYPE, receipt_info: ReceiptInfo, force: bool = False) -> int:
         """Create expense, attach receipt, and notify user."""
         msg_target = update.callback_query.message if getattr(update, 'callback_query', None) else update.message
         
+        sw = self._get_service(context)
         # Check for potential duplicates unless force-proceeding
         if not force:
-            duplicates = splitwise_service.find_potential_duplicates(receipt_info)
+            duplicates = sw.find_potential_duplicates(receipt_info)
             if duplicates:
                 dup_list = []
                 for d in duplicates:
@@ -429,7 +442,7 @@ class TelegramBot:
                 return DUPLICATE_CHECK
 
         try:
-            result = splitwise_service.create_expense(receipt_info)
+            result = sw.create_expense(receipt_info)
         except Exception as e:
             logger.error(f"Error creating expense: {e}")
             await msg_target.reply_text(f"Error creating expense: {e}", reply_markup=ReplyKeyboardRemove())
@@ -449,7 +462,7 @@ class TelegramBot:
         attachment_note = ""
         if receipt_file_path:
             try:
-                splitwise_service.attach_receipt_to_expense(result['expense_id'], receipt_file_path)
+                sw.attach_receipt_to_expense(result['expense_id'], receipt_file_path)
                 attachment_note = "\nReceipt image/PDF has been attached to the expense."
             except Exception as attach_err:
                 logger.error(f"Failed to attach receipt for expense {result['expense_id']}: {attach_err}")
